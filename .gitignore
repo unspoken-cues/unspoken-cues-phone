@@ -1,0 +1,35 @@
+# Android / Kotlin
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Signing & secrets — never commit these
+*.keystore
+*.jks
+keystore.properties
+signing.properties
+google-services.json
+service-account*.json
+*.p12
+*.pem
+.env
+.env.*
+secrets.properties
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Wear OS / multi-module
+*/build/
