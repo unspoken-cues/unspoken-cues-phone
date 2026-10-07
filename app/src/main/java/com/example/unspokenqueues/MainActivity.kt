@@ -1,11 +1,14 @@
 package com.example.unspokenqueues
 
+import android.graphics.Color
 import android.os.Bundle
+import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,6 +19,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +30,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.MockData
+import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.CueScreen
@@ -39,9 +44,33 @@ import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         setContent {
-            UnspokenQueuesTheme { UnspokenCuesApp() }
+            var themeMode by remember {
+                mutableStateOf(
+                    ThemeMode.entries.find { it.name == prefs.getString("theme_mode", null) } ?: ThemeMode.SYSTEM,
+                )
+            }
+            val dark = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            // Keep status/nav bar icons readable when the app theme differs from the system theme.
+            DisposableEffect(dark) {
+                val style = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+                onDispose {}
+            }
+            UnspokenQueuesTheme(darkTheme = dark) {
+                UnspokenCuesApp(
+                    themeMode = themeMode,
+                    onThemeModeChange = {
+                        themeMode = it
+                        prefs.edit().putString("theme_mode", it.name).apply()
+                    },
+                )
+            }
         }
     }
 }
@@ -55,7 +84,7 @@ enum class Tab(val label: String, @DrawableRes val icon: Int) {
 }
 
 @Composable
-fun UnspokenCuesApp() {
+fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: (ThemeMode) -> Unit = {}) {
     var signedIn by rememberSaveable { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
     var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
@@ -113,6 +142,8 @@ fun UnspokenCuesApp() {
                 Tab.BINDER -> BinderScreen(status, profile)
                 Tab.SETTINGS -> SettingsScreen(
                     watch = watch,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
                     onReconnect = {
                         watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
                     },
