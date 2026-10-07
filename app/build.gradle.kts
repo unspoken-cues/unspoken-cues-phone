@@ -12,7 +12,7 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 fun secret(key: String): String =
-    (localProps.getProperty(key) ?: System.getenv(key) ?: "")
+    (localProps.getProperty(key) ?: System.getenv(key) ?: "").trim()
 
 android {
     namespace = "com.example.unspokenqueues"

@@ -17,15 +17,23 @@ import io.github.jan.supabase.postgrest.Postgrest
 object SupabaseClientProvider {
 
     val client: SupabaseClient by lazy {
-        require(BuildConfig.SUPABASE_URL.isNotBlank()) {
+        val url = BuildConfig.SUPABASE_URL.trim()
+        val key = BuildConfig.SUPABASE_ANON_KEY.trim()
+        require(url.isNotBlank()) {
             "SUPABASE_URL is empty. Add it to local.properties (see the Supabase section)."
         }
-        require(BuildConfig.SUPABASE_ANON_KEY.isNotBlank()) {
+        require(key.isNotBlank()) {
             "SUPABASE_ANON_KEY is empty. Add it to local.properties (see the Supabase section)."
         }
+        // The client speaks HTTP to the REST API. A Postgres connection string
+        // (postgresql://...:5432/...) is NOT a valid value and will hang until timeout.
+        require(url.startsWith("https://") || url.startsWith("http://")) {
+            "SUPABASE_URL must be the project REST URL like https://<ref>.supabase.co, " +
+                "not a database connection string. Got: $url"
+        }
         createSupabaseClient(
-            supabaseUrl = BuildConfig.SUPABASE_URL,
-            supabaseKey = BuildConfig.SUPABASE_ANON_KEY,
+            supabaseUrl = url,
+            supabaseKey = key,
         ) {
             install(Auth)
             install(Postgrest)
