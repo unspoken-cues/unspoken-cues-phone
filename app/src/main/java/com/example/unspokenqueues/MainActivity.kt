@@ -41,6 +41,7 @@ import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.CueScreen
 import com.example.unspokenqueues.ui.screens.EditProfileScreen
+import com.example.unspokenqueues.ui.screens.EventsScreen
 import com.example.unspokenqueues.ui.screens.ProfileScreen
 import com.example.unspokenqueues.ui.screens.QrScreen
 import com.example.unspokenqueues.ui.screens.SettingsScreen
@@ -85,10 +86,10 @@ class MainActivity : ComponentActivity() {
 
 enum class Tab(val label: String, @DrawableRes val icon: Int) {
     CUE("Cue", R.drawable.ic_cue),
-    PROFILE("Profile", R.drawable.ic_profile),
+    EVENTS("Events", R.drawable.ic_events),
     QR("QR", R.drawable.ic_qr),
     BINDER("Binder", R.drawable.ic_binder),
-    SETTINGS("Settings", R.drawable.ic_settings),
+    PROFILE("Profile", R.drawable.ic_profile),
 }
 
 @Composable
@@ -103,6 +104,7 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
     var watch by rememberSaveable { mutableStateOf(WatchConnection.CONNECTED) }
     var profile by remember { mutableStateOf(MockData.profile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
+    var showingSettings by rememberSaveable { mutableStateOf(false) }
 
     // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
     LaunchedEffect(Unit) {
@@ -160,6 +162,30 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
         return
     }
 
+    // Settings is reached from the cog on the Profile screen rather than its own tab.
+    if (showingSettings) {
+        BackHandler { showingSettings = false }
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                SettingsScreen(
+                    watch = watch,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    onReconnect = {
+                        watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
+                    },
+                    onSignOut = {
+                        scope.launch { runCatching { authRepo.signOut() } }
+                        showingSettings = false
+                        tab = Tab.CUE
+                    },
+                    onBack = { showingSettings = false },
+                )
+            }
+        }
+        return
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -183,6 +209,9 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
                     val uid = authRepo.currentUserId()
                     if (uid != null) scope.launch { runCatching { profileRepo.updateStatus(uid, newStatus) } }
                 }
+                Tab.EVENTS -> EventsScreen()
+                Tab.QR -> QrScreen(status, profile)
+                Tab.BINDER -> BinderScreen(status, profile)
                 Tab.PROFILE -> ProfileScreen(
                     profile = profile,
                     onEdit = { editingProfile = true },
@@ -191,20 +220,7 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
                         val uid = authRepo.currentUserId()
                         if (uid != null) scope.launch { runCatching { profileRepo.updateVisibility(uid, isPublic) } }
                     },
-                )
-                Tab.QR -> QrScreen(status, profile)
-                Tab.BINDER -> BinderScreen(status, profile)
-                Tab.SETTINGS -> SettingsScreen(
-                    watch = watch,
-                    themeMode = themeMode,
-                    onThemeModeChange = onThemeModeChange,
-                    onReconnect = {
-                        watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
-                    },
-                    onSignOut = {
-                        scope.launch { runCatching { authRepo.signOut() } }
-                        tab = Tab.CUE
-                    },
+                    onOpenSettings = { showingSettings = true },
                 )
             }
         }

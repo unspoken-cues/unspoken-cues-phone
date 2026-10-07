@@ -36,6 +36,8 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -54,12 +56,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.unspokenqueues.R
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
@@ -255,14 +259,42 @@ private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onC
     }
 }
 
+// ---------- 2. Events ----------
+
+// Placeholder: the events experience is built out in a later sprint.
+@Composable
+fun EventsScreen() {
+    ScreenColumn {
+        ScreenTitle("Events", "Find and join events near you.")
+        SectionCard {
+            Text("Coming soon", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Events you join will show up here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 // ---------- 3. Profile ----------
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProfileScreen(profile: Profile, onEdit: () -> Unit, onVisibilityChange: (Boolean) -> Unit) {
+fun ProfileScreen(
+    profile: Profile,
+    onEdit: () -> Unit,
+    onVisibilityChange: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val p = profile
     ScreenColumn {
-        ScreenTitle("Profile")
+        Row(verticalAlignment = Alignment.Top) {
+            Box(Modifier.weight(1f)) { ScreenTitle("Profile") }
+            IconButton(onOpenSettings) {
+                Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings")
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Avatar(p.displayName, 72)
             Column(Modifier.weight(1f)) {
@@ -546,10 +578,14 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     onReconnect: () -> Unit,
     onSignOut: () -> Unit,
+    onBack: () -> Unit,
 ) {
     var demoMode by remember { mutableStateOf(false) }
     ScreenColumn {
-        ScreenTitle("Settings")
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
+            Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
         SectionCard(title = "Watch") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
