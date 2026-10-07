@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.random.Random
 
 class EventRulesTest {
 
@@ -86,5 +87,42 @@ class EventRulesTest {
         assertFalse(isValidJoinCode("MIXER!"))
         assertFalse(isValidJoinCode("MIXÉR1"))
         assertFalse(isValidJoinCode("١٢٣٤"))
+    }
+
+    // ---------- generateJoinCode ----------
+
+    @Test
+    fun generatedCode_hasTheConfiguredLength() {
+        repeat(200) { assertEquals(JOIN_CODE_LENGTH, generateJoinCode().length) }
+    }
+
+    @Test
+    fun generatedCode_usesOnlyTheUnambiguousAlphabet() {
+        repeat(200) {
+            val code = generateJoinCode()
+            assertTrue(code, code.all { it in JOIN_CODE_ALPHABET })
+        }
+    }
+
+    @Test
+    fun alphabet_isUppercaseLettersAndDigits_withoutLookAlikes() {
+        assertTrue(JOIN_CODE_ALPHABET.all { it in 'A'..'Z' || it in '0'..'9' })
+        assertTrue("01OIL".none { it in JOIN_CODE_ALPHABET })
+        assertEquals(JOIN_CODE_ALPHABET.length, JOIN_CODE_ALPHABET.toSet().size)
+    }
+
+    @Test
+    fun generatedCode_alwaysPassesTheValidator() {
+        repeat(200) {
+            val code = generateJoinCode()
+            assertTrue(code, isValidJoinCode(code))
+        }
+    }
+
+    @Test
+    fun generatedCode_isRepeatableForASeed_andVariesAcrossSeeds() {
+        assertEquals(generateJoinCode(Random(42)), generateJoinCode(Random(42)))
+        val codes = (1..50).map { generateJoinCode(Random(it)) }.toSet()
+        assertTrue("expected mostly distinct codes, got ${codes.size}", codes.size > 45)
     }
 }

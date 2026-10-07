@@ -5,6 +5,7 @@ import com.example.unspokenqueues.ui.theme.CueGreen
 import com.example.unspokenqueues.ui.theme.CuePurple
 import com.example.unspokenqueues.ui.theme.CueRed
 import com.example.unspokenqueues.ui.theme.CueYellow
+import kotlin.random.Random
 
 enum class CueStatus(val label: String, val meaning: String, val color: Color) {
     GREEN("Green", "Open to connect", CueGreen),
@@ -66,6 +67,19 @@ fun visibleAttendees(viewerId: String, hostId: String, attendees: List<Attendee>
 
 const val JOIN_CODE_MIN_LENGTH = 4
 const val JOIN_CODE_MAX_LENGTH = 8
+
+/** Length of the join codes the app generates for new events. */
+const val JOIN_CODE_LENGTH = 6
+
+// Capital letters and digits, minus the ones people mix up when reading a code aloud or off a
+// screen (0/O, 1/I/L).
+const val JOIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+/** A random join code for a new event. Pass a seeded [random] to get repeatable codes in tests. */
+fun generateJoinCode(random: Random = Random.Default): String =
+    buildString(JOIN_CODE_LENGTH) {
+        repeat(JOIN_CODE_LENGTH) { append(JOIN_CODE_ALPHABET[random.nextInt(JOIN_CODE_ALPHABET.length)]) }
+    }
 
 /**
  * Whether [code] looks like an event join code: 4-8 letters or digits (A-Z, 0-9, any case).
