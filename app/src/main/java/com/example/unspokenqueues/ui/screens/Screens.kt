@@ -313,7 +313,7 @@ private fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((Str
 // ---------- 3b. Edit profile ----------
 
 @Composable
-fun EditProfileScreen(initial: Profile, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
+fun EditProfileScreen(initial: Profile, email: String?, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
     var name by remember { mutableStateOf(initial.displayName) }
     var bio by remember { mutableStateOf(initial.bio) }
     var preferences by remember { mutableStateOf(initial.preferences) }
@@ -338,6 +338,13 @@ fun EditProfileScreen(initial: Profile, onSave: (Profile) -> Unit, onCancel: () 
         }
 
         SectionCard(title = "Identity") {
+            if (email != null) {
+                // The sign-in email is shown for reference only; it can't be changed here.
+                OutlinedTextField(
+                    email, {}, label = { Text("Email") }, singleLine = true, readOnly = true, enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             OutlinedTextField(
                 name, { name = it }, label = { Text("Display name") }, singleLine = true,
                 isError = name.isBlank(),

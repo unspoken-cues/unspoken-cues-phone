@@ -146,6 +146,7 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
             Box(Modifier.padding(padding)) {
                 EditProfileScreen(
                     initial = profile,
+                    email = authRepo.currentUser()?.email,
                     onSave = { updated ->
                         profile = updated
                         editingProfile = false
