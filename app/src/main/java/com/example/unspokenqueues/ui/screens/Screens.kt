@@ -1,8 +1,10 @@
 package com.example.unspokenqueues.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +29,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -43,25 +50,29 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
+import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.Dot
 import com.example.unspokenqueues.ui.components.ScreenTitle
+import com.example.unspokenqueues.ui.components.FullScreenQr
 import com.example.unspokenqueues.ui.components.SectionCard
+import com.example.unspokenqueues.ui.components.SwapCard
 import com.example.unspokenqueues.ui.components.WatchPill
-import kotlin.random.Random
 
 @Composable
 private fun ScreenColumn(content: @Composable () -> Unit) {
@@ -141,6 +152,39 @@ fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueSta
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        EventAttendees(MockData.event)
+    }
+}
+
+@Composable
+private fun EventAttendees(event: Event) {
+    Column(Modifier.padding(top = 8.dp)) {
+        Text("At this event", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "${event.name} · ${event.details}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    SectionCard(title = "${event.attendees.size} registered") {
+        event.attendees.forEachIndexed { i, person ->
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            AttendeeRow(person)
+        }
+    }
+}
+
+@Composable
+private fun AttendeeRow(person: Attendee) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40) }
+        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Dot(person.status.color, 12)
     }
 }
 
@@ -291,46 +335,72 @@ private fun EditableListCard(title: String, hint: String, items: List<String>, o
 
 @Composable
 fun QrScreen(status: CueStatus, profile: Profile) {
+    var qrExpanded by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
     ScreenColumn {
-        ScreenTitle("My QR", "Let others scan to see your public profile.")
-        SectionCard {
-            Box(
-                Modifier.fillMaxWidth().aspectRatio(1f).border(3.dp, status.color, RoundedCornerShape(16.dp)).padding(20.dp),
-            ) { QrPlaceholder(MockData.qrId) }
-            Text(
-                profile.displayName,
-                Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.titleMedium,
-                textAlign = TextAlign.Center,
-            )
-        }
+        ScreenTitle("My Card", "Others scan the code to collect your swap card.")
+        SwapCard(profile, status, qrId = MockData.qrId, onQrClick = { qrExpanded = true })
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button({}, Modifier.weight(1f).height(52.dp)) { Text("Share") }
+            Button({ sharing = true }, Modifier.weight(1f).height(52.dp)) { Text("Share") }
             OutlinedButton({}, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
         }
     }
+    if (qrExpanded) {
+        FullScreenQr(MockData.qrId, profile.displayName, status) { qrExpanded = false }
+    }
+    if (sharing) {
+        ShareCardSheet(profile.displayName, MockData.shareLink) { sharing = false }
+    }
 }
 
-// Visual stand-in only. Real QR generation (opaque ID + resolver) is pending the Sprint 1 decision.
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QrPlaceholder(seed: String) {
-    val ink = MaterialTheme.colorScheme.onSurface
-    val paper = MaterialTheme.colorScheme.surface
-    Canvas(Modifier.fillMaxSize()) {
-        val n = 25
-        val cell = size.minDimension / n
-        val rnd = Random(seed.hashCode())
-        fun finder(cx: Int, cy: Int) = cx < 7 && cy < 7 || cx >= n - 7 && cy < 7 || cx < 7 && cy >= n - 7
-        for (y in 0 until n) for (x in 0 until n) {
-            if (!finder(x, y) && rnd.nextBoolean()) {
-                drawRect(ink, Offset(x * cell, y * cell), Size(cell, cell))
+private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Share your card", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Anyone with this link can collect your swap card.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Text(
+                    link,
+                    Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
             }
-        }
-        listOf(0 to 0, n - 7 to 0, 0 to n - 7).forEach { (fx, fy) ->
-            val o = Offset(fx * cell, fy * cell)
-            drawRect(ink, o, Size(cell * 7, cell * 7))
-            drawRect(paper, o + Offset(cell, cell), Size(cell * 5, cell * 5))
-            drawRect(ink, o + Offset(cell * 2, cell * 2), Size(cell * 3, cell * 3))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Swap card link", link))
+                        copied = true
+                    },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                ) { Text(if (copied) "Copied ✓" else "Copy link") }
+                Button(
+                    onClick = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "Collect my Unspoken Cues swap card: $link")
+                        }
+                        context.startActivity(Intent.createChooser(send, "Send $name's card"))
+                    },
+                    modifier = Modifier.weight(1f).height(52.dp),
+                ) { Text("Send…") }
+            }
         }
     }
 }
@@ -339,32 +409,59 @@ private fun QrPlaceholder(seed: String) {
 
 @Composable
 fun BinderScreen(status: CueStatus, profile: Profile) {
+    var opened by remember { mutableStateOf<CollectedCard?>(null) }
+    opened?.let { PersonDetail(it.profile, it.status) { opened = null } }
     ScreenColumn {
         ScreenTitle("Binder", "Cards you've collected through S.W.A.P.")
         Surface(
             Modifier.fillMaxWidth().height(160.dp),
             shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Row(Modifier.padding(20.dp)) {
                 Box(Modifier.width(6.dp).fillMaxHeightBar(status.color))
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceBetween) {
-                    Text("MY CARD", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+                    Text("MY CARD", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Column {
-                        Text(profile.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.surface)
-                        Text(status.meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+                        Text(profile.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                        Text(status.meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         }
-        Button({}, Modifier.fillMaxWidth().height(52.dp)) { Text("Collect My Card") }
 
         Text("Collection · ${MockData.collection.size}", style = MaterialTheme.typography.titleMedium)
         MockData.collection.chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { CollectedTile(it, Modifier.weight(1f)) }
+                row.forEach { card -> CollectedTile(card, Modifier.weight(1f)) { opened = card } }
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+// Full-screen view of someone else's card (collected or at an event) with all their preferences and boundaries.
+@Composable
+private fun PersonDetail(profile: Profile, status: CueStatus, onClose: () -> Unit) {
+    Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(profile.displayName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClose) { Text("Close") }
+                }
+                SwapCard(profile, status)
+                SectionCard(title = "Preferences") { ChipsOrEmpty(profile.preferences, "No preferences shared") }
+                SectionCard(title = "Boundaries") { ChipsOrEmpty(profile.boundaries, "No boundaries shared") }
             }
         }
     }
@@ -374,8 +471,8 @@ private fun Modifier.fillMaxHeightBar(color: Color) =
     this.height(120.dp).background(color, RoundedCornerShape(3.dp))
 
 @Composable
-private fun CollectedTile(card: CollectedCard, modifier: Modifier) {
-    SectionCard(modifier.aspectRatio(0.8f)) {
+private fun CollectedTile(card: CollectedCard, modifier: Modifier, onClick: () -> Unit) {
+    SectionCard(modifier.aspectRatio(0.8f).clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
         Dot(card.status.color, 16)
         Spacer(Modifier.weight(1f))
         Text(card.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -385,7 +482,13 @@ private fun CollectedTile(card: CollectedCard, modifier: Modifier) {
 // ---------- 6. Settings / Pairing ----------
 
 @Composable
-fun SettingsScreen(watch: WatchConnection, onReconnect: () -> Unit, onSignOut: () -> Unit) {
+fun SettingsScreen(
+    watch: WatchConnection,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onReconnect: () -> Unit,
+    onSignOut: () -> Unit,
+) {
     var demoMode by remember { mutableStateOf(false) }
     ScreenColumn {
         ScreenTitle("Settings")
@@ -400,6 +503,23 @@ fun SettingsScreen(watch: WatchConnection, onReconnect: () -> Unit, onSignOut: (
             OutlinedButton(onReconnect, Modifier.fillMaxWidth()) {
                 Text(if (watch == WatchConnection.CONNECTED) "Disconnect" else "Reconnect")
             }
+        }
+        SectionCard(title = "Appearance") {
+            Text("Theme", style = MaterialTheme.typography.bodyLarge)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                ThemeMode.entries.forEachIndexed { i, mode ->
+                    SegmentedButton(
+                        selected = mode == themeMode,
+                        onClick = { onThemeModeChange(mode) },
+                        shape = SegmentedButtonDefaults.itemShape(i, ThemeMode.entries.size),
+                    ) { Text(mode.label) }
+                }
+            }
+            Text(
+                "System follows your phone's setting.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         SectionCard(title = "App") {
             ToggleRow("Tutorial / demo mode", "Walk through the app with sample data", demoMode) { demoMode = it }
