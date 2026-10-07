@@ -117,7 +117,14 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
     // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
     LaunchedEffect(Unit) {
         authRepo.sessionStatus.collect { s ->
-            signedIn = s is SessionStatus.Authenticated
+            // Only a definite answer changes the flag. The status goes back to Initializing every
+            // time the app is backgrounded (e.g. while the camera is open); treating that as signed
+            // out would flash the sign-in screen and throw away whatever screen the user was on.
+            when (s) {
+                is SessionStatus.Authenticated -> signedIn = true
+                is SessionStatus.NotAuthenticated -> signedIn = false
+                else -> Unit
+            }
         }
     }
 
