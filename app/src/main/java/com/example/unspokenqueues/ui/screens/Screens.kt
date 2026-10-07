@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
@@ -46,6 +47,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +75,7 @@ import com.example.unspokenqueues.ui.components.FullScreenQr
 import com.example.unspokenqueues.ui.components.SectionCard
 import com.example.unspokenqueues.ui.components.SwapCard
 import com.example.unspokenqueues.ui.components.WatchPill
+import kotlinx.coroutines.launch
 
 @Composable
 private fun ScreenColumn(content: @Composable () -> Unit) {
@@ -88,9 +91,35 @@ private fun ScreenColumn(content: @Composable () -> Unit) {
 // ---------- 1. Sign in ----------
 
 @Composable
-fun SignInScreen(onSignIn: () -> Unit) {
+fun SignInScreen(
+    onSignIn: suspend (email: String, password: String) -> Unit,
+    onSignUp: suspend (email: String, password: String) -> Unit,
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun submit(signUp: Boolean) {
+        if (loading) return
+        error = null
+        if (email.isBlank() || password.isBlank()) {
+            error = "Enter your email and password."
+            return
+        }
+        loading = true
+        scope.launch {
+            try {
+                if (signUp) onSignUp(email, password) else onSignIn(email, password)
+            } catch (e: Exception) {
+                error = e.message ?: "Something went wrong. Please try again."
+            } finally {
+                loading = false
+            }
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -106,15 +135,37 @@ fun SignInScreen(onSignIn: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(32.dp))
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            email, { email = it }, label = { Text("Email") }, singleLine = true,
+            enabled = !loading, modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             password, { password = it }, label = { Text("Password") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+            enabled = !loading, visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
         )
+        if (error != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
         Spacer(Modifier.height(24.dp))
-        Button(onSignIn, Modifier.fillMaxWidth().height(52.dp)) { Text("Sign in") }
-        TextButton(onSignIn, Modifier.fillMaxWidth()) { Text("Create an account") }
+        Button(
+            onClick = { submit(signUp = false) },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Text("Sign in")
+            }
+        }
+        TextButton(
+            onClick = { submit(signUp = true) },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Create an account") }
     }
 }
 
@@ -262,7 +313,7 @@ private fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((Str
 // ---------- 3b. Edit profile ----------
 
 @Composable
-fun EditProfileScreen(initial: Profile, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
+fun EditProfileScreen(initial: Profile, email: String?, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
     var name by remember { mutableStateOf(initial.displayName) }
     var bio by remember { mutableStateOf(initial.bio) }
     var preferences by remember { mutableStateOf(initial.preferences) }
@@ -287,6 +338,13 @@ fun EditProfileScreen(initial: Profile, onSave: (Profile) -> Unit, onCancel: () 
         }
 
         SectionCard(title = "Identity") {
+            if (email != null) {
+                // The sign-in email is shown for reference only; it can't be changed here.
+                OutlinedTextField(
+                    email, {}, label = { Text("Email") }, singleLine = true, readOnly = true, enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             OutlinedTextField(
                 name, { name = it }, label = { Text("Display name") }, singleLine = true,
                 isError = name.isBlank(),

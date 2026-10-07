@@ -20,14 +20,20 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
+import com.example.unspokenqueues.data.AuthRepository
+import com.example.unspokenqueues.data.ProfileRepository
+import com.example.unspokenqueues.data.toCueStatus
+import com.example.unspokenqueues.data.toProfile
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.ThemeMode
@@ -40,6 +46,8 @@ import com.example.unspokenqueues.ui.screens.QrScreen
 import com.example.unspokenqueues.ui.screens.SettingsScreen
 import com.example.unspokenqueues.ui.screens.SignInScreen
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
+import io.github.jan.supabase.auth.status.SessionStatus
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,17 +93,49 @@ enum class Tab(val label: String, @DrawableRes val icon: Int) {
 
 @Composable
 fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: (ThemeMode) -> Unit = {}) {
-    var signedIn by rememberSaveable { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val authRepo = remember { AuthRepository() }
+    val profileRepo = remember { ProfileRepository() }
+
+    var signedIn by rememberSaveable { mutableStateOf(authRepo.currentUser() != null) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
     var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
     var watch by rememberSaveable { mutableStateOf(WatchConnection.CONNECTED) }
-    // Not saveable yet: resets on rotation / process death until local storage is added.
     var profile by remember { mutableStateOf(MockData.profile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
 
+    // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
+    LaunchedEffect(Unit) {
+        authRepo.sessionStatus.collect { s ->
+            signedIn = s is SessionStatus.Authenticated
+        }
+    }
+
+    // Load the profile + status from the database whenever we become signed in.
+    LaunchedEffect(signedIn) {
+        if (signedIn) {
+            val uid = authRepo.currentUserId() ?: return@LaunchedEffect
+            runCatching {
+                val row = profileRepo.loadProfile(uid)
+                if (row != null) {
+                    profile = row.toProfile()
+                    status = row.toCueStatus()
+                } else {
+                    // No row yet (e.g. older account): seed one from current local state.
+                    profileRepo.upsertProfile(uid, profile, status)
+                }
+            }
+        }
+    }
+
     if (!signedIn) {
         Scaffold { padding ->
-            Box(Modifier.padding(padding)) { SignInScreen(onSignIn = { signedIn = true }) }
+            Box(Modifier.padding(padding)) {
+                SignInScreen(
+                    onSignIn = { email, password -> authRepo.signIn(email, password) },
+                    onSignUp = { email, password -> authRepo.signUp(email, password) },
+                )
+            }
         }
         return
     }
@@ -106,7 +146,13 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
             Box(Modifier.padding(padding)) {
                 EditProfileScreen(
                     initial = profile,
-                    onSave = { profile = it; editingProfile = false },
+                    email = authRepo.currentUser()?.email,
+                    onSave = { updated ->
+                        profile = updated
+                        editingProfile = false
+                        val uid = authRepo.currentUserId()
+                        if (uid != null) scope.launch { runCatching { profileRepo.upsertProfile(uid, updated, status) } }
+                    },
                     onCancel = { editingProfile = false },
                 )
             }
@@ -132,11 +178,19 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
     ) { padding ->
         Box(Modifier.padding(padding)) {
             when (tab) {
-                Tab.CUE -> CueScreen(status, watch) { status = it }
+                Tab.CUE -> CueScreen(status, watch) { newStatus ->
+                    status = newStatus
+                    val uid = authRepo.currentUserId()
+                    if (uid != null) scope.launch { runCatching { profileRepo.updateStatus(uid, newStatus) } }
+                }
                 Tab.PROFILE -> ProfileScreen(
                     profile = profile,
                     onEdit = { editingProfile = true },
-                    onVisibilityChange = { profile = profile.copy(isPublic = it) },
+                    onVisibilityChange = { isPublic ->
+                        profile = profile.copy(isPublic = isPublic)
+                        val uid = authRepo.currentUserId()
+                        if (uid != null) scope.launch { runCatching { profileRepo.updateVisibility(uid, isPublic) } }
+                    },
                 )
                 Tab.QR -> QrScreen(status, profile)
                 Tab.BINDER -> BinderScreen(status, profile)
@@ -147,7 +201,10 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
                     onReconnect = {
                         watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
                     },
-                    onSignOut = { signedIn = false; tab = Tab.CUE },
+                    onSignOut = {
+                        scope.launch { runCatching { authRepo.signOut() } }
+                        tab = Tab.CUE
+                    },
                 )
             }
         }
