@@ -28,12 +28,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.unspokenqueues.data.AuthRepository
+import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.ProfileRepository
+import com.example.unspokenqueues.data.SwapRepository
 import com.example.unspokenqueues.data.toCueStatus
 import com.example.unspokenqueues.data.toProfile
+import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.ThemeMode
@@ -97,6 +101,9 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
     val scope = rememberCoroutineScope()
     val authRepo = remember { AuthRepository() }
     val profileRepo = remember { ProfileRepository() }
+    val swapRepo = remember { SwapRepository() }
+    val avatarRepo = remember { AvatarRepository() }
+    val contentResolver = LocalContext.current.contentResolver
 
     var signedIn by rememberSaveable { mutableStateOf(authRepo.currentUser() != null) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
@@ -105,6 +112,7 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
     var profile by remember { mutableStateOf(MockData.profile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
     var showingSettings by rememberSaveable { mutableStateOf(false) }
+    var collection by remember { mutableStateOf<List<CollectedCard>>(emptyList()) }
 
     // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
     LaunchedEffect(Unit) {
@@ -130,6 +138,17 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
         }
     }
 
+    // Reload the binder on sign-in and each time it is opened, so a card disappears once the
+    // other person has removed the swap.
+    LaunchedEffect(signedIn, tab) {
+        if (!signedIn) {
+            collection = emptyList()
+        } else if (tab == Tab.BINDER || tab == Tab.CUE) {
+            val uid = authRepo.currentUserId() ?: return@LaunchedEffect
+            runCatching { swapRepo.loadBinder(uid) }.onSuccess { collection = it }
+        }
+    }
+
     if (!signedIn) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
@@ -149,6 +168,10 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
                 EditProfileScreen(
                     initial = profile,
                     email = authRepo.currentUser()?.email,
+                    onUploadAvatar = { uri ->
+                        val uid = authRepo.currentUserId() ?: error("Not signed in")
+                        avatarRepo.upload(contentResolver, uid, uri)
+                    },
                     onSave = { updated ->
                         profile = updated
                         editingProfile = false
@@ -211,7 +234,22 @@ fun UnspokenCuesApp(themeMode: ThemeMode = ThemeMode.SYSTEM, onThemeModeChange: 
                 }
                 Tab.EVENTS -> EventsScreen()
                 Tab.QR -> QrScreen(status, profile)
-                Tab.BINDER -> BinderScreen(status, profile)
+                Tab.BINDER -> BinderScreen(
+                    status = status,
+                    profile = profile,
+                    collection = collection,
+                    onRemove = { card ->
+                        val uid = authRepo.currentUserId()
+                        if (uid != null) {
+                            val before = collection
+                            collection = collection - card
+                            scope.launch {
+                                // Put the card back if the server didn't delete the swap.
+                                runCatching { swapRepo.removeSwap(uid, card.userId) }.onFailure { collection = before }
+                            }
+                        }
+                    },
+                )
                 Tab.PROFILE -> ProfileScreen(
                     profile = profile,
                     onEdit = { editingProfile = true },

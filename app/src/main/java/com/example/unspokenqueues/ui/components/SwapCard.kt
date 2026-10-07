@@ -29,12 +29,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil3.compose.AsyncImage
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
 import kotlin.random.Random
@@ -89,6 +91,14 @@ fun SwapCard(
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
+                        if (profile.avatarUrl.isNotBlank()) {
+                            AsyncImage(
+                                model = profile.avatarUrl,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            )
+                        }
                     }
                     Column(Modifier.weight(1f)) {
                         Text(

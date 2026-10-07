@@ -31,6 +31,8 @@ data class Profile(
     val preferences: List<String>,
     val boundaries: List<String>,
     val isPublic: Boolean,
+    // Public URL of the profile photo; blank means none (initials are shown instead).
+    val avatarUrl: String = "",
 )
 
 data class Attendee(val profile: Profile, val status: CueStatus) {
@@ -39,7 +41,8 @@ data class Attendee(val profile: Profile, val status: CueStatus) {
 
 data class Event(val name: String, val details: String, val attendees: List<Attendee>)
 
-data class CollectedCard(val profile: Profile, val status: CueStatus) {
+// A card in the binder. userId is the other person's account id, used to remove the swap.
+data class CollectedCard(val userId: String, val profile: Profile, val status: CueStatus) {
     val name get() = profile.displayName
 }
 
@@ -51,14 +54,6 @@ object MockData {
         preferences = listOf("Text over calls", "Small groups", "Direct feedback"),
         boundaries = listOf("No hugs without asking", "No photos"),
         isPublic = true,
-    )
-
-    val collection = listOf(
-        CollectedCard(Profile("Sam", "Runner. Always down for a walk-and-talk.", listOf("Texting", "One-on-one"), listOf("No early calls"), true), CueStatus.GREEN),
-        CollectedCard(Profile("Jordan", "New in town, still finding my people.", listOf("Small groups"), listOf("Ask before tagging me"), true), CueStatus.YELLOW),
-        CollectedCard(Profile("Taylor", "Music, books, quiet corners.", listOf("Low-key hangouts", "Voice notes"), listOf("No surprise visits"), true), CueStatus.PURPLE),
-        CollectedCard(Profile("Morgan", "Ask me about plants.", listOf("Direct feedback"), emptyList(), true), CueStatus.GREEN),
-        CollectedCard(Profile("Casey", "Recharging this week.", listOf("Email over chat"), listOf("No hugs", "No photos"), true), CueStatus.RED),
     )
 
     // Mock event. Real attendee lists will come from the backend (Sprint 1 decision).
