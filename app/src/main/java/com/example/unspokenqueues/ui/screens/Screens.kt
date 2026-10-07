@@ -221,13 +221,11 @@ fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueSta
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-
-        EventAttendees(MockData.event)
     }
 }
 
 @Composable
-private fun EventAttendees(event: Event) {
+private fun EventAttendees(event: Event, attendees: List<Attendee>) {
     Column(Modifier.padding(top = 8.dp)) {
         Text("At this event", style = MaterialTheme.typography.titleMedium)
         Text(
@@ -236,8 +234,8 @@ private fun EventAttendees(event: Event) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    SectionCard(title = "${event.attendees.size} registered") {
-        event.attendees.forEachIndexed { i, person ->
+    SectionCard(title = "${attendees.size} registered") {
+        attendees.forEachIndexed { i, person ->
             if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             AttendeeRow(person)
         }
