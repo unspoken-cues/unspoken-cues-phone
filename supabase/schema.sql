@@ -136,8 +136,8 @@ create policy "Members can delete their swaps"
   on public.swaps for delete
   using (auth.uid() in (user_a, user_b));
 
--- No insert policy on purpose: creating a swap needs proof that both people took part
--- (e.g. a scanned QR token), which will be added with the collect flow.
+-- No insert policy on purpose: creating a swap needs proof that the other person shared
+-- their card. swap_by_card_token() (section 12) checks that proof and inserts the row.
 
 -- Swap partners can read each other's profile even when it is not public.
 drop policy if exists "Swap partners can read each other" on public.profiles;
@@ -334,6 +334,106 @@ create policy "Users can delete own avatar"
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- ---------------------------------------------------------------------------
+-- 12. Card tokens + swapping. Each user has one secret token; their QR code and
+--     share link carry it. Whoever presents the token proves the owner shared
+--     their card, which is what lets swap_by_card_token() create the swap.
+--     Tokens live in their own table (not on profiles) because public profiles
+--     are readable by anyone, and a readable token would let anyone swap with
+--     everyone.
+-- ---------------------------------------------------------------------------
+create table if not exists public.card_tokens (
+  user_id     uuid        primary key references auth.users (id) on delete cascade,
+  token       text        not null unique default replace(gen_random_uuid()::text, '-', ''),
+  created_at  timestamptz not null default now()
+);
+
+comment on table public.card_tokens is 'Secret token behind each user''s S.W.A.P. card QR code and share link.';
+
+alter table public.card_tokens enable row level security;
+
+drop policy if exists "Owner can read own card token" on public.card_tokens;
+
+create policy "Owner can read own card token"
+  on public.card_tokens for select
+  using (auth.uid() = user_id);
+
+-- No insert/update/delete policies: my_card_token() creates the row.
+
+-- Returns the caller's card token, creating it the first time.
+create or replace function public.my_card_token()
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  t text;
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  insert into public.card_tokens (user_id)
+  values (auth.uid())
+  on conflict (user_id) do nothing;
+
+  select ct.token into t from public.card_tokens ct where ct.user_id = auth.uid();
+  return t;
+end;
+$$;
+
+revoke execute on function public.my_card_token() from public, anon;
+grant  execute on function public.my_card_token() to authenticated;
+
+-- Swaps cards between the caller and the owner of the token, so each appears in the
+-- other's binder, and returns the owner's profile. Swapping twice is a no-op.
+-- SECURITY DEFINER because the caller can read neither the token nor (if it is
+-- private) the owner's profile before the swap exists.
+create or replace function public.swap_by_card_token(card_token text)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me       uuid := auth.uid();
+  owner_id uuid;
+  p        public.profiles;
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  select ct.user_id into owner_id
+  from public.card_tokens ct
+  where ct.token = lower(trim(card_token));
+
+  if not found then
+    raise exception 'No card with that code' using errcode = 'P0002';
+  end if;
+
+  if owner_id = me then
+    raise exception 'That is your own card' using errcode = '22023';
+  end if;
+
+  select * into p from public.profiles pr where pr.id = owner_id;
+
+  if not found then
+    raise exception 'No card with that code' using errcode = 'P0002';
+  end if;
+
+  insert into public.swaps (user_a, user_b)
+  values (least(me, owner_id), greatest(me, owner_id))
+  on conflict (user_a, user_b) do nothing;
+
+  return p;
+end;
+$$;
+
+revoke execute on function public.swap_by_card_token(text) from public, anon;
+grant  execute on function public.swap_by_card_token(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Manual test notes
 -- ---------------------------------------------------------------------------
 -- 1. Paste this whole file into the SQL editor and run it. Run it a second time:
@@ -373,3 +473,26 @@ create policy "Users can delete own avatar"
 --    rollback;
 --
 --    delete from public.events where join_code = 'MIXER1';  -- clean up
+--
+-- 4. Try the swap flow, again impersonating real users from auth.users:
+--
+--    begin;
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select public.my_card_token();                        -- 32 hex characters
+--      select public.my_card_token();                        -- the same token again
+--      select * from public.card_tokens;                     -- one row: user 1 only
+--      select * from public.swap_by_card_token('<that token>');  -- error: That is your own card
+--      select * from public.swap_by_card_token('nope');      -- error: No card with that code
+--    rollback;
+--
+--    Run my_card_token() for user 1 without the rollback to keep a token, then:
+--
+--    begin;
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-2-id>", "role": "authenticated"}';
+--      select * from public.swap_by_card_token('<user 1 token>');  -- returns user 1's profile
+--      select * from public.swap_by_card_token('<user 1 token>');  -- same row again, no error
+--      select * from public.swaps;                                 -- one row holding both users
+--      select * from public.card_tokens;                           -- no rows: user 1's token stays hidden
+--    rollback;

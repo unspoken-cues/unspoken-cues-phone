@@ -79,15 +79,17 @@ import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
-import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
+import com.example.unspokenqueues.model.cardTokenFrom
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.Dot
 import com.example.unspokenqueues.ui.components.ScreenTitle
 import com.example.unspokenqueues.ui.components.FullScreenQr
+import com.example.unspokenqueues.ui.components.QrScanner
 import com.example.unspokenqueues.ui.components.SectionCard
 import com.example.unspokenqueues.ui.components.SwapCard
 import com.example.unspokenqueues.ui.components.WatchPill
@@ -510,23 +512,125 @@ private fun EditableListCard(title: String, hint: String, items: List<String>, o
 
 // ---------- 4. QR ----------
 
+/**
+ * The user's own card with its QR code, plus the ways to swap: share the link, scan someone's
+ * code, or type in a link they sent. [cardLink] is null until the user's code has loaded;
+ * [cardLinkFailed] says loading it went wrong. [onCollect] receives whatever was scanned or
+ * pasted and is expected to report the outcome itself.
+ */
 @Composable
-fun QrScreen(status: CueStatus, profile: Profile) {
+fun QrScreen(
+    status: CueStatus,
+    profile: Profile,
+    cardLink: String?,
+    cardLinkFailed: Boolean,
+    onCollect: (String) -> Unit,
+) {
     var qrExpanded by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var enteringLink by rememberSaveable { mutableStateOf(false) }
     ScreenColumn {
-        ScreenTitle("My Card", "Others scan the code to collect your swap card.")
-        SwapCard(profile, status, qrId = MockData.qrId, onQrClick = { qrExpanded = true })
+        ScreenTitle("My Card", "Scan each other's code or send your link to swap cards.")
+        SwapCard(profile, status, qrId = cardLink, onQrClick = { qrExpanded = true })
+        if (cardLink == null && cardLinkFailed) {
+            Text(
+                "Couldn't load your code. Check your connection, then open this tab again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button({ sharing = true }, Modifier.weight(1f).height(52.dp)) { Text("Share") }
-            OutlinedButton({}, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
+            Button({ sharing = true }, Modifier.weight(1f).height(52.dp), enabled = cardLink != null) { Text("Share") }
+            OutlinedButton({ scanning = true }, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
+        }
+        TextButton({ enteringLink = true }, Modifier.fillMaxWidth()) { Text("Enter a link instead") }
+    }
+    if (cardLink != null) {
+        if (qrExpanded) {
+            FullScreenQr(cardLink, profile.displayName, status) { qrExpanded = false }
+        }
+        if (sharing) {
+            ShareCardSheet(profile.displayName, cardLink) { sharing = false }
         }
     }
-    if (qrExpanded) {
-        FullScreenQr(MockData.qrId, profile.displayName, status) { qrExpanded = false }
+    if (scanning) {
+        QrScanner(
+            onCode = {
+                scanning = false
+                onCollect(it)
+            },
+            onDismiss = { scanning = false },
+            hint = "Point the camera at someone's card code",
+        )
     }
-    if (sharing) {
-        ShareCardSheet(profile.displayName, MockData.shareLink) { sharing = false }
+    if (enteringLink) {
+        EnterLinkDialog(
+            onSubmit = {
+                enteringLink = false
+                onCollect(it)
+            },
+            onDismiss = { enteringLink = false },
+        )
+    }
+}
+
+// For a card link that arrived as text (a message, an email) rather than as a QR code.
+@Composable
+private fun EnterLinkDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val valid = cardTokenFrom(text) != null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Enter a card link") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Paste the link someone sent you. Pasting their whole message works too.")
+                OutlinedTextField(
+                    text, { text = it }, label = { Text("Card link") },
+                    isError = text.isNotBlank() && !valid,
+                    supportingText = if (text.isNotBlank() && !valid) { { Text("That doesn't contain a card link.") } } else null,
+                    maxLines = 4, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton({ onSubmit(text) }, enabled = valid) { Text("Swap cards") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Asks before swapping when a card link opened the app, since nobody tapped "swap" in the app itself. */
+@Composable
+fun ConfirmLinkSwapDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Swap cards?") },
+        text = { Text("You opened a card link. Swapping adds their card to your binder and puts your card in theirs.") },
+        confirmButton = { TextButton(onConfirm) { Text("Swap cards") } },
+        dismissButton = { TextButton(onDismiss) { Text("Not now") } },
+    )
+}
+
+/** Tells the user how collecting a card ended. */
+@Composable
+fun SwapResultDialog(result: SwapResult, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
+    when (result) {
+        is SwapResult.Swapped -> {
+            val whose = result.card.name.takeIf { it.isNotBlank() }?.let { "$it's" } ?: "Their"
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("Cards swapped") },
+                text = { Text("$whose card is in your binder, and yours is in theirs.") },
+                confirmButton = { TextButton(onViewBinder) { Text("View binder") } },
+                dismissButton = { TextButton(onDismiss) { Text("Done") } },
+            )
+        }
+        is SwapResult.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Couldn't swap cards") },
+            text = { Text(result.message) },
+            confirmButton = { TextButton(onDismiss) { Text("OK") } },
+        )
     }
 }
 
@@ -542,7 +646,8 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
         ) {
             Text("Share your card", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
-                "Anyone with this link can collect your swap card.",
+                "Anyone with this link can swap cards with you. If tapping it doesn't open the app, " +
+                    "they can paste it under My Card → Enter a link instead.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -571,7 +676,11 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "Collect my Unspoken Cues swap card: $link")
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Swap cards with me on Unspoken Cues. Open this link on your phone, or paste it " +
+                                    "into the app under My Card → Enter a link instead: $link",
+                            )
                         }
                         context.startActivity(Intent.createChooser(send, "Send $name's card"))
                     },

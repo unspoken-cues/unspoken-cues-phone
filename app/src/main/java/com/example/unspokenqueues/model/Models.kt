@@ -96,6 +96,33 @@ data class CollectedCard(val userId: String, val profile: Profile, val status: C
     val name get() = profile.displayName
 }
 
+/** How an attempt to collect someone's card from a scan or a link ended. */
+sealed interface SwapResult {
+    data class Swapped(val card: CollectedCard) : SwapResult
+    data class Failed(val message: String) : SwapResult
+}
+
+// Card links use the app's own scheme, so they open the app without needing a website.
+const val CARD_LINK_PREFIX = "unspokencues://card/"
+
+/** The link behind a user's QR code and share sheet. [token] is their secret card token. */
+fun cardLink(token: String): String = CARD_LINK_PREFIX + token
+
+// A card token is 32 hex digits. It may arrive as a card link sitting anywhere inside pasted
+// text (e.g. a whole chat message), or as the bare token.
+private val cardLinkPattern = Regex(Regex.escape(CARD_LINK_PREFIX) + "([0-9a-f]{32})(?![0-9a-f])", RegexOption.IGNORE_CASE)
+private val bareTokenPattern = Regex("[0-9a-f]{32}", RegexOption.IGNORE_CASE)
+
+/**
+ * The card token inside scanned or pasted [text], lower-cased as the server stores it, or null
+ * if the text doesn't hold one.
+ */
+fun cardTokenFrom(text: String): String? {
+    val token = cardLinkPattern.find(text)?.groupValues?.get(1)
+        ?: text.trim().takeIf { bareTokenPattern.matches(it) }
+    return token?.lowercase()
+}
+
 // Mock data until the backend decision is made (Sprint 1).
 object MockData {
     val profile = Profile(
@@ -105,10 +132,4 @@ object MockData {
         boundaries = listOf("No hugs without asking", "No photos"),
         isPublic = true,
     )
-
-    // Opaque ID only; the QR resolves to a public profile route, never raw profile data.
-    const val qrId = "uc_7f3a9c21"
-
-    // Placeholder link: the domain and resolver don't exist yet.
-    const val shareLink = "https://unspokencues.app/c/$qrId"
 }

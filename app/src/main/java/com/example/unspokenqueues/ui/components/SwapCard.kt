@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,7 +40,9 @@ import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
-import kotlin.random.Random
+import com.google.zxing.WriterException
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import com.google.zxing.qrcode.encoder.Encoder
 
 // The card stays dark in both themes so every cue color (yellow included) reads against it.
 private val CardInk = Color(0xFF1B1D22)
@@ -130,7 +133,7 @@ fun SwapCard(
                                 Modifier.size(92.dp).clip(RoundedCornerShape(14.dp)).background(Color.White)
                                     .then(if (onQrClick != null) Modifier.clickable(onClick = onQrClick) else Modifier)
                                     .padding(8.dp),
-                            ) { QrPlaceholder(qrId) }
+                            ) { QrCode(qrId) }
                             if (onQrClick != null) {
                                 Text(
                                     "Tap to enlarge",
@@ -181,7 +184,10 @@ private fun CardList(title: String, items: List<String>) {
     }
 }
 
-/** Full-screen, high-contrast QR for scanning. Tap anywhere to close. */
+/**
+ * Full-screen, high-contrast QR for scanning. Tap anywhere to close. [qrId] is the text the code
+ * carries: a card id, or an event's join code.
+ */
 @Composable
 fun FullScreenQr(qrId: String, name: String, status: CueStatus, onDismiss: () -> Unit) {
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
@@ -194,7 +200,7 @@ fun FullScreenQr(qrId: String, name: String, status: CueStatus, onDismiss: () ->
             Spacer(Modifier.height(24.dp))
             Box(
                 Modifier.fillMaxWidth().aspectRatio(1f).border(4.dp, status.color, RoundedCornerShape(20.dp)).padding(20.dp),
-            ) { QrPlaceholder(qrId) }
+            ) { QrCode(qrId) }
             Spacer(Modifier.height(24.dp))
             Text(
                 "Tap anywhere to close",
@@ -206,25 +212,30 @@ fun FullScreenQr(qrId: String, name: String, status: CueStatus, onDismiss: () ->
     }
 }
 
-// Visual stand-in only. Real QR generation (opaque ID + resolver) is pending the Sprint 1 decision.
-// Always black on white so it stays scannable in dark mode.
+/**
+ * The dark modules of a QR code that encodes [content], as rows of cells (true = dark) with no
+ * quiet zone around them. Null when the text is too long to fit in a QR code.
+ */
+internal fun qrModules(content: String): Array<BooleanArray>? =
+    try {
+        val matrix = Encoder.encode(content, ErrorCorrectionLevel.M).matrix
+        Array(matrix.height) { y -> BooleanArray(matrix.width) { x -> matrix.get(x, y).toInt() == 1 } }
+    } catch (e: WriterException) {
+        null
+    }
+
+// A scannable QR code for [content]. Always black on white so it stays scannable in dark mode;
+// the caller supplies the white background and the padding that acts as the quiet zone.
 @Composable
-fun QrPlaceholder(seed: String) {
+fun QrCode(content: String) {
+    val modules = remember(content) { qrModules(content) } ?: return
     Canvas(Modifier.fillMaxSize()) {
-        val n = 25
-        val cell = size.minDimension / n
-        val rnd = Random(seed.hashCode())
-        fun finder(cx: Int, cy: Int) = cx < 7 && cy < 7 || cx >= n - 7 && cy < 7 || cx < 7 && cy >= n - 7
-        for (y in 0 until n) for (x in 0 until n) {
-            if (!finder(x, y) && rnd.nextBoolean()) {
-                drawRect(QrInk, Offset(x * cell, y * cell), Size(cell, cell))
+        val cell = size.minDimension / modules.size
+        modules.forEachIndexed { y, row ->
+            row.forEachIndexed { x, dark ->
+                // Cells overlap by a hair so rounding never leaves light seams between dark ones.
+                if (dark) drawRect(QrInk, Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
             }
-        }
-        listOf(0 to 0, n - 7 to 0, 0 to n - 7).forEach { (fx, fy) ->
-            val o = Offset(fx * cell, fy * cell)
-            drawRect(QrInk, o, Size(cell * 7, cell * 7))
-            drawRect(Color.White, o + Offset(cell, cell), Size(cell * 5, cell * 5))
-            drawRect(QrInk, o + Offset(cell * 2, cell * 2), Size(cell * 3, cell * 3))
         }
     }
 }
