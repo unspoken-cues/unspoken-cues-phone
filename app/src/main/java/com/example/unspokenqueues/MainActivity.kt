@@ -56,6 +56,7 @@ import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.model.cardLink
 import com.example.unspokenqueues.model.cardTokenFrom
+import com.example.unspokenqueues.ui.screens.AuthFlow
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.ConfirmLinkSwapDialog
 import com.example.unspokenqueues.ui.screens.CreateEventScreen
@@ -66,7 +67,6 @@ import com.example.unspokenqueues.ui.screens.EventsScreen
 import com.example.unspokenqueues.ui.screens.ProfileScreen
 import com.example.unspokenqueues.ui.screens.QrScreen
 import com.example.unspokenqueues.ui.screens.SettingsScreen
-import com.example.unspokenqueues.ui.screens.SignInScreen
 import com.example.unspokenqueues.ui.screens.SwapResultDialog
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
 import io.github.jan.supabase.auth.status.SessionStatus
@@ -306,7 +306,7 @@ fun UnspokenCuesApp(
     if (!signedIn) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
-                SignInScreen(
+                AuthFlow(
                     onSignIn = { email, password -> authRepo.signIn(email, password) },
                     onSignUp = { email, password -> authRepo.signUp(email, password) },
                 )

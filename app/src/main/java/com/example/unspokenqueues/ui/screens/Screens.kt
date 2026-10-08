@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,6 +72,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -119,30 +121,125 @@ private fun ScreenColumn(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-// ---------- 1. Sign in ----------
+// ---------- 1. Welcome / Sign in / Create account ----------
+
+private enum class AuthStep { WELCOME, SIGN_IN, CREATE_ACCOUNT }
+
+/**
+ * What a signed-out user sees: a welcome screen that leads to the sign-in or the create-account
+ * form. Neither callback reports success: once there is a session the caller stops showing this
+ * flow altogether.
+ */
+@Composable
+fun AuthFlow(
+    onSignIn: suspend (email: String, password: String) -> Unit,
+    onSignUp: suspend (email: String, password: String) -> Unit,
+) {
+    var step by rememberSaveable { mutableStateOf(AuthStep.WELCOME) }
+    when (step) {
+        AuthStep.WELCOME -> WelcomeScreen(
+            onSignIn = { step = AuthStep.SIGN_IN },
+            onCreateAccount = { step = AuthStep.CREATE_ACCOUNT },
+        )
+        AuthStep.SIGN_IN -> SignInScreen(onSignIn, onBack = { step = AuthStep.WELCOME })
+        AuthStep.CREATE_ACCOUNT -> CreateAccountScreen(onSignUp, onBack = { step = AuthStep.WELCOME })
+    }
+    // From a form the system back button returns to Welcome; from Welcome it leaves the app.
+    BackHandler(enabled = step != AuthStep.WELCOME) { step = AuthStep.WELCOME }
+}
+
+@Composable
+private fun CueDots() {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CueStatus.entries.forEach { Dot(it.color, 14) }
+    }
+}
+
+@Composable
+fun WelcomeScreen(onSignIn: () -> Unit, onCreateAccount: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        CueDots()
+        Spacer(Modifier.height(20.dp))
+        Text("Unspoken Cues", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Let people know how you're doing — without saying a word.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(32.dp))
+        Button(onSignIn, Modifier.fillMaxWidth().height(52.dp)) { Text("Sign in") }
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(onCreateAccount, Modifier.fillMaxWidth().height(52.dp)) { Text("Create an account") }
+    }
+}
 
 @Composable
 fun SignInScreen(
     onSignIn: suspend (email: String, password: String) -> Unit,
-    onSignUp: suspend (email: String, password: String) -> Unit,
+    onBack: () -> Unit,
 ) {
-    var email by remember { mutableStateOf("") }
+    AuthForm(
+        title = "Welcome back",
+        subtitle = "Sign in with the email and password for your account.",
+        submitLabel = "Sign in",
+        confirmPassword = false,
+        onSubmit = onSignIn,
+        onBack = onBack,
+    )
+}
+
+@Composable
+fun CreateAccountScreen(
+    onSignUp: suspend (email: String, password: String) -> Unit,
+    onBack: () -> Unit,
+) {
+    AuthForm(
+        title = "Create your account",
+        subtitle = "You'll use this email and password to sign in.",
+        submitLabel = "Create account",
+        confirmPassword = true,
+        onSubmit = onSignUp,
+        onBack = onBack,
+    )
+}
+
+// The form behind both auth screens. [confirmPassword] adds a second password field, which
+// catches a typo in a password that has never been used to sign in yet.
+@Composable
+private fun AuthForm(
+    title: String,
+    subtitle: String,
+    submitLabel: String,
+    confirmPassword: Boolean,
+    onSubmit: suspend (email: String, password: String) -> Unit,
+    onBack: () -> Unit,
+) {
+    var email by rememberSaveable { mutableStateOf("") }
+    // Passwords are deliberately not saveable: they shouldn't be written into saved state.
     var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun submit(signUp: Boolean) {
+    fun submit() {
         if (loading) return
         error = null
         if (email.isBlank() || password.isBlank()) {
             error = "Enter your email and password."
             return
         }
+        if (confirmPassword && password != confirm) {
+            error = "Those passwords don't match."
+            return
+        }
         loading = true
         scope.launch {
             try {
-                if (signUp) onSignUp(email, password) else onSignIn(email, password)
+                onSubmit(email, password)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -153,52 +250,62 @@ fun SignInScreen(
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CueStatus.entries.forEach { Dot(it.color, 14) }
-        }
+    // Top-aligned and scrollable so the fields stay reachable with the keyboard up.
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+        TextButton(onBack, enabled = !loading) { Text("Back") }
+        Spacer(Modifier.height(24.dp))
+        CueDots()
         Spacer(Modifier.height(20.dp))
-        Text("Unspoken Cues", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
+        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         Text(
-            "Let people know how you're doing — without saying a word.",
+            subtitle,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(32.dp))
         OutlinedTextField(
             email, { email = it }, label = { Text("Email") }, singleLine = true,
-            enabled = !loading, modifier = Modifier.fillMaxWidth(),
+            enabled = !loading,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             password, { password = it }, label = { Text("Password") }, singleLine = true,
             enabled = !loading, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = if (confirmPassword) ImeAction.Next else ImeAction.Done,
+            ),
+            keyboardActions = KeyboardActions(onDone = { submit() }),
             modifier = Modifier.fillMaxWidth(),
         )
+        if (confirmPassword) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                confirm, { confirm = it }, label = { Text("Confirm password") }, singleLine = true,
+                enabled = !loading, visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         if (error != null) {
             Spacer(Modifier.height(12.dp))
             Text(error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { submit(signUp = false) },
+            onClick = ::submit,
             enabled = !loading,
             modifier = Modifier.fillMaxWidth().height(52.dp),
         ) {
             if (loading) {
                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
             } else {
-                Text("Sign in")
+                Text(submitLabel)
             }
         }
-        TextButton(
-            onClick = { submit(signUp = true) },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Create an account") }
     }
 }
 
