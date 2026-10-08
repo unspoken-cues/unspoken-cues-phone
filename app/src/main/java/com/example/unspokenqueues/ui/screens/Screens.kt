@@ -898,31 +898,9 @@ fun EditProfileScreen(
     // A photo chosen or taken on this screen. It is only uploaded when the user taps Save.
     // Saveable because Android may recreate the activity while the camera app is in front.
     var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
-    var pendingCapture by rememberSaveable { mutableStateOf<Uri?>(null) }
-    var photoMenuOpen by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) pickedPhoto = uri
-    }
-    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
-        if (saved) pickedPhoto = pendingCapture
-    }
-    fun launchCamera() {
-        // The camera app writes the photo into our cache through a FileProvider URI. A new file
-        // per capture keeps the preview from showing a previously cached shot.
-        val file = File(context.cacheDir, "captures/avatar_${System.currentTimeMillis()}.jpg")
-        file.parentFile?.mkdirs()
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        pendingCapture = uri
-        takePhoto.launch(uri)
-    }
-    val requestCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) launchCamera() else photoError = "Camera permission is needed to take a photo."
-    }
 
     fun save() {
         if (saving) return
@@ -955,41 +933,17 @@ fun EditProfileScreen(
         }
 
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Avatar(name, 88, pickedPhoto ?: avatarUrl)
-            Box {
-                TextButton({ photoMenuOpen = true }, enabled = !saving) { Text("Change photo") }
-                DropdownMenu(photoMenuOpen, { photoMenuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Choose from gallery") },
-                        onClick = {
-                            photoMenuOpen = false
-                            photoError = null
-                            pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Take photo") },
-                        onClick = {
-                            photoMenuOpen = false
-                            photoError = null
-                            // Launching the camera app throws unless the declared CAMERA permission is granted.
-                            val granted = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
-                                PackageManager.PERMISSION_GRANTED
-                            if (granted) launchCamera() else requestCamera.launch(android.Manifest.permission.CAMERA)
-                        },
-                    )
-                    if (pickedPhoto != null || avatarUrl.isNotBlank()) {
-                        DropdownMenuItem(
-                            text = { Text("Remove photo") },
-                            onClick = {
-                                photoMenuOpen = false
-                                pickedPhoto = null
-                                avatarUrl = ""
-                            },
-                        )
-                    }
-                }
-            }
+            AvatarPicker(
+                name = name,
+                image = pickedPhoto ?: avatarUrl,
+                enabled = !saving,
+                onPicked = { pickedPhoto = it },
+                onRemove = {
+                    pickedPhoto = null
+                    avatarUrl = ""
+                },
+                onError = { photoError = it },
+            )
             photoError?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
@@ -1010,8 +964,8 @@ fun EditProfileScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
-                bio, { if (it.length <= 120) bio = it }, label = { Text("Bio") },
-                supportingText = { Text("${bio.length}/120") },
+                bio, { if (it.length <= BIO_MAX_LENGTH) bio = it }, label = { Text("Bio") },
+                supportingText = { Text("${bio.length}/$BIO_MAX_LENGTH") },
                 minLines = 2, maxLines = 4, modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1025,25 +979,126 @@ fun EditProfileScreen(
     }
 }
 
+internal const val BIO_MAX_LENGTH = 120
+
+/**
+ * A profile photo with its photo menu underneath: choose from the gallery, take one with the
+ * camera, or remove it. [image] is what to show now: a photo just picked, the stored URL, or
+ * null/blank for none. A new photo is handed to [onPicked] as a local Uri; uploading it is the
+ * caller's job. [onError] receives a problem to show the user, or null when a new attempt starts.
+ */
+@Composable
+internal fun AvatarPicker(
+    name: String,
+    image: Any?,
+    enabled: Boolean,
+    onPicked: (Uri) -> Unit,
+    onRemove: () -> Unit,
+    onError: (String?) -> Unit,
+) {
+    val hasPhoto = image != null && image != ""
+    // Saveable because Android may recreate the activity while the camera app is in front.
+    var pendingCapture by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) onPicked(uri)
+    }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        if (saved) pendingCapture?.let(onPicked)
+    }
+    fun launchCamera() {
+        // The camera app writes the photo into our cache through a FileProvider URI. A new file
+        // per capture keeps the preview from showing a previously cached shot.
+        val file = File(context.cacheDir, "captures/avatar_${System.currentTimeMillis()}.jpg")
+        file.parentFile?.mkdirs()
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        pendingCapture = uri
+        takePhoto.launch(uri)
+    }
+    val requestCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchCamera() else onError("Camera permission is needed to take a photo.")
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Avatar(name, 88, image)
+        Box {
+            TextButton({ menuOpen = true }, enabled = enabled) { Text(if (hasPhoto) "Change photo" else "Add photo") }
+            DropdownMenu(menuOpen, { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Choose from gallery") },
+                    onClick = {
+                        menuOpen = false
+                        onError(null)
+                        pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Take photo") },
+                    onClick = {
+                        menuOpen = false
+                        onError(null)
+                        // Launching the camera app throws unless the declared CAMERA permission is granted.
+                        val granted = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        if (granted) launchCamera() else requestCamera.launch(android.Manifest.permission.CAMERA)
+                    },
+                )
+                if (hasPhoto) {
+                    DropdownMenuItem(
+                        text = { Text("Remove photo") },
+                        onClick = {
+                            menuOpen = false
+                            onRemove()
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** [this] list with [text] added, trimmed. Blank text and entries already in the list change nothing. */
+internal fun List<String>.withEntry(text: String): List<String> {
+    val entry = text.trim()
+    return if (entry.isEmpty() || entry in this) this else this + entry
+}
+
 @Composable
 private fun EditableListCard(title: String, hint: String, items: List<String>, onChange: (List<String>) -> Unit) {
     var draft by remember { mutableStateOf("") }
-    fun add() {
-        val v = draft.trim()
-        if (v.isNotEmpty() && v !in items) onChange(items + v)
-        draft = ""
-    }
     SectionCard(title = title) {
-        ChipsOrEmpty(items, "Nothing added yet", onRemove = { onChange(items - it) })
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                draft, { draft = it }, placeholder = { Text(hint) }, singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { add() }),
-                modifier = Modifier.weight(1f),
-            )
-            Button(::add, enabled = draft.isNotBlank()) { Text("Add") }
-        }
+        EditableList(hint, items, onChange, draft) { draft = it }
+    }
+}
+
+/**
+ * A list of short entries shown as removable chips, with a field to add another. [draft] is the
+ * text in that field; it is the caller's state so the caller can act on text that was typed but
+ * never added.
+ */
+@Composable
+internal fun EditableList(
+    hint: String,
+    items: List<String>,
+    onChange: (List<String>) -> Unit,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+) {
+    fun add() {
+        onChange(items.withEntry(draft))
+        onDraftChange("")
+    }
+    ChipsOrEmpty(items, "Nothing added yet", onRemove = { onChange(items - it) })
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            draft, onDraftChange, placeholder = { Text(hint) }, singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { add() }),
+            modifier = Modifier.weight(1f),
+        )
+        Button(::add, enabled = draft.isNotBlank()) { Text("Add") }
     }
 }
 
@@ -1397,7 +1452,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
