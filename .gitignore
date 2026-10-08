@@ -33,3 +33,5 @@ firestore-debug.log
 
 # Wear OS / multi-module
 */build/
+
+*/.claude

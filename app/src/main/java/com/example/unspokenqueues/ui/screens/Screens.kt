@@ -3,6 +3,11 @@ package com.example.unspokenqueues.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -28,14 +33,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,38 +54,59 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import com.example.unspokenqueues.R
+import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.authFailureMessage
+import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
-import com.example.unspokenqueues.model.MockData
+import com.example.unspokenqueues.model.JOIN_CODE_MAX_LENGTH
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
+import com.example.unspokenqueues.model.cardTokenFrom
+import com.example.unspokenqueues.model.isValidJoinCode
+import com.example.unspokenqueues.model.visibleAttendees
+import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.Dot
 import com.example.unspokenqueues.ui.components.ScreenTitle
 import com.example.unspokenqueues.ui.components.FullScreenQr
+import com.example.unspokenqueues.ui.components.QrScanner
 import com.example.unspokenqueues.ui.components.SectionCard
 import com.example.unspokenqueues.ui.components.SwapCard
 import com.example.unspokenqueues.ui.components.WatchPill
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.io.File
 
 @Composable
 private fun ScreenColumn(content: @Composable () -> Unit) {
@@ -112,8 +143,10 @@ fun SignInScreen(
         scope.launch {
             try {
                 if (signUp) onSignUp(email, password) else onSignIn(email, password)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                error = e.message ?: "Something went wrong. Please try again."
+                error = authFailureMessage(e)
             } finally {
                 loading = false
             }
@@ -203,39 +236,6 @@ fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueSta
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-
-        EventAttendees(MockData.event)
-    }
-}
-
-@Composable
-private fun EventAttendees(event: Event) {
-    Column(Modifier.padding(top = 8.dp)) {
-        Text("At this event", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "${event.name} · ${event.details}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    SectionCard(title = "${event.attendees.size} registered") {
-        event.attendees.forEachIndexed { i, person ->
-            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-            AttendeeRow(person)
-        }
-    }
-}
-
-@Composable
-private fun AttendeeRow(person: Attendee) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40) }
-        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Dot(person.status.color, 12)
     }
 }
 
@@ -255,16 +255,492 @@ private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onC
     }
 }
 
+// ---------- 2. Events ----------
+
+/**
+ * The events the user hosts or has joined, plus the two ways into a new one: host it, or join
+ * with the host's code (typed or scanned). [onOpen] receives an event the user tapped or just
+ * joined.
+ */
+@Composable
+fun EventsScreen(
+    repo: EventRepository,
+    userId: String,
+    onHost: () -> Unit,
+    onOpen: (Event) -> Unit,
+) {
+    // Null until the first load answers.
+    var events by remember { mutableStateOf<List<Event>?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var joinOpen by rememberSaveable { mutableStateOf(false) }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var joining by remember { mutableStateOf(false) }
+    var joinError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(userId) {
+        try {
+            events = repo.myEvents(userId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+        }
+    }
+
+    fun join(text: String) {
+        if (joining) return
+        joinError = null
+        joining = true
+        scope.launch {
+            try {
+                onOpen(repo.joinByCode(text))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                joinError = joinFailureMessage((e as? PostgrestRestException)?.code)
+            } finally {
+                joining = false
+            }
+        }
+    }
+
+    ScreenColumn {
+        ScreenTitle("Events", "Host an event, or join one with its code.")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onHost, Modifier.weight(1f).height(52.dp)) { Text("Host event") }
+            OutlinedButton({ joinOpen = true }, Modifier.weight(1f).height(52.dp)) { Text("Join event") }
+        }
+
+        Text("My events", style = MaterialTheme.typography.titleMedium)
+        val loaded = events
+        when {
+            loaded == null && loadFailed -> Text(
+                "Couldn't load your events. Check your connection, then open this tab again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            loaded == null -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            loaded.isEmpty() -> Text(
+                "No events yet. Host one, or join with a code from the host.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> loaded.forEach { event ->
+                EventListItem(event, hosting = event.hostId == userId) { onOpen(event) }
+            }
+        }
+    }
+
+    // Hidden while the scanner is up so the two dialogs don't stack.
+    if (joinOpen && !scanning) {
+        JoinEventDialog(
+            code = code,
+            onCodeChange = {
+                code = it.trim().uppercase().take(JOIN_CODE_MAX_LENGTH)
+                joinError = null
+            },
+            joining = joining,
+            error = joinError,
+            onJoin = { join(code) },
+            onScan = { scanning = true },
+            onDismiss = {
+                joinOpen = false
+                code = ""
+                joinError = null
+            },
+        )
+    }
+    if (scanning) {
+        QrScanner(
+            onCode = { scanned ->
+                scanning = false
+                // The camera reads any QR code, e.g. someone's card instead of the event's.
+                if (isValidJoinCode(scanned)) {
+                    code = scanned.trim().uppercase()
+                    join(scanned)
+                } else {
+                    joinError = "That QR code isn't an event code."
+                }
+            },
+            onDismiss = { scanning = false },
+            hint = "Point the camera at the event's QR code",
+        )
+    }
+}
+
+@Composable
+private fun EventListItem(event: Event, hosting: Boolean, onClick: () -> Unit) {
+    SectionCard(Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(event.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (event.details.isNotBlank()) {
+                    Text(
+                        event.details,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Chip(
+                when {
+                    !event.active -> "Ended"
+                    hosting -> "Hosting"
+                    else -> "Joined"
+                },
+            )
+        }
+    }
+}
+
+// The way into someone else's event: type the host's code, or scan the QR code they are showing.
+@Composable
+private fun JoinEventDialog(
+    code: String,
+    onCodeChange: (String) -> Unit,
+    joining: Boolean,
+    error: String?,
+    onJoin: () -> Unit,
+    onScan: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val canJoin = isValidJoinCode(code) && !joining
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Join an event") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Enter the code from the host, or scan the QR code they're showing.")
+                OutlinedTextField(
+                    code, onCodeChange, label = { Text("Event code") }, singleLine = true,
+                    enabled = !joining,
+                    isError = error != null,
+                    supportingText = if (error != null) { { Text(error) } } else null,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { if (canJoin) onJoin() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onScan, Modifier.fillMaxWidth(), enabled = !joining) { Text("Scan QR code") }
+            }
+        },
+        confirmButton = { TextButton(onJoin, enabled = canJoin) { Text(if (joining) "Joining…" else "Join") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+// ---------- 2b. Host an event ----------
+
+private const val EVENT_NAME_MAX_LENGTH = 60
+private const val EVENT_DETAILS_MAX_LENGTH = 200
+
+@Composable
+fun CreateEventScreen(
+    repo: EventRepository,
+    userId: String,
+    onCreated: (Event) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var details by rememberSaveable { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun create() {
+        if (creating) return
+        creating = true
+        error = null
+        scope.launch {
+            try {
+                onCreated(repo.createEvent(userId, name, details))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = "Couldn't create the event. Check your connection and try again."
+            } finally {
+                creating = false
+            }
+        }
+    }
+
+    ScreenColumn {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onCancel) { Text("Cancel") }
+            Spacer(Modifier.weight(1f))
+            Text("Host an event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = ::create,
+                enabled = name.isNotBlank() && !creating,
+            ) { Text(if (creating) "Creating…" else "Create") }
+        }
+
+        SectionCard(title = "Event") {
+            OutlinedTextField(
+                name, { if (it.length <= EVENT_NAME_MAX_LENGTH) name = it }, label = { Text("Event name") },
+                singleLine = true, enabled = !creating, modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                details, { if (it.length <= EVENT_DETAILS_MAX_LENGTH) details = it }, label = { Text("Details") },
+                placeholder = { Text("e.g. Friday 7 PM, Room 204") },
+                supportingText = { Text("${details.length}/$EVENT_DETAILS_MAX_LENGTH") },
+                minLines = 2, maxLines = 4, enabled = !creating, modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+        Text(
+            "You'll get a code and a QR code for people to join with. As the host you see every attendee's status.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// ---------- 2c. Event detail ----------
+
+/**
+ * One event: its attendees, and for the host the join QR and the way to end it. Anyone can take
+ * the event off their list: an attendee leaves it, the host deletes it for everyone. [status] is
+ * the viewer's own cue, which colours the join QR's frame. [onEventChange] receives the event
+ * once the host has ended it; [onRemoved] is called once the viewer has left or deleted it.
+ */
+@Composable
+fun EventDetailScreen(
+    repo: EventRepository,
+    userId: String,
+    status: CueStatus,
+    event: Event,
+    onEventChange: (Event) -> Unit,
+    onRemoved: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val isHost = event.hostId == userId
+    // Null until the first load answers.
+    var attendees by remember { mutableStateOf<List<Attendee>?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    // Bumped to load the attendee list again.
+    var reload by remember { mutableIntStateOf(0) }
+    var showingQr by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    var confirmingEnd by remember { mutableStateOf(false) }
+    var confirmingRemove by remember { mutableStateOf(false) }
+    // True while ending, leaving or deleting is in flight; only one runs at a time.
+    var working by remember { mutableStateOf(false) }
+    var actionError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(event.id, reload) {
+        try {
+            attendees = repo.eventAttendees(event.id)
+            loadFailed = false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+        }
+    }
+
+    fun perform(failure: String, action: suspend () -> Unit) {
+        if (working) return
+        working = true
+        actionError = null
+        scope.launch {
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionError = failure
+            } finally {
+                working = false
+            }
+        }
+    }
+
+    fun end() = perform("Couldn't end the event. Check your connection and try again.") {
+        repo.endEvent(event.id)
+        onEventChange(event.copy(active = false))
+    }
+
+    fun remove() = perform(
+        if (isHost) "Couldn't delete the event. Check your connection and try again."
+        else "Couldn't leave the event. Check your connection and try again.",
+    ) {
+        if (isHost) repo.deleteEvent(event.id) else repo.leaveEvent(event.id, userId)
+        onRemoved()
+    }
+
+    ScreenColumn {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
+            Text("Event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
+        ScreenTitle(event.name, event.details.takeIf { it.isNotBlank() })
+
+        if (!event.active) {
+            Text(
+                "This event has ended. Nobody else can join.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (isHost) {
+            SectionCard(title = "Join code") {
+                Text(event.joinCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Event join code", event.joinCode))
+                            copied = true
+                        },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                    ) { Text(if (copied) "Copied ✓" else "Copy code") }
+                    Button({ showingQr = true }, Modifier.weight(1f).height(52.dp)) { Text("Show join QR") }
+                }
+            }
+        }
+
+        // The rule lives in visibleAttendees: the host sees everyone, others only green and yellow.
+        val visible = attendees?.let { visibleAttendees(userId, event.hostId, it) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (visible == null) "Attendees" else "Attendees · ${visible.size}",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextButton({ reload++ }) { Text("Refresh") }
+        }
+        if (loadFailed) {
+            Text(
+                "Couldn't load attendees. Check your connection, then refresh.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        when {
+            visible == null -> if (!loadFailed) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            visible.isEmpty() -> Text(
+                if (isHost && event.active) "Nobody has joined yet. Show the join QR or share the code." else "Nobody to show yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> SectionCard {
+                visible.forEachIndexed { i, person ->
+                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    AttendeeRow(person)
+                }
+            }
+        }
+        if (!isHost) {
+            Text(
+                "You see attendees who are green or yellow. The host sees everyone's status.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        actionError?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+        if (isHost && event.active) {
+            OutlinedButton({ confirmingEnd = true }, Modifier.fillMaxWidth().height(52.dp), enabled = !working) {
+                Text("End event")
+            }
+        }
+        TextButton({ confirmingRemove = true }, Modifier.fillMaxWidth(), enabled = !working) {
+            Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error)
+        }
+    }
+
+    if (showingQr) {
+        FullScreenQr(event.joinCode, event.name, status) {
+            showingQr = false
+            // Whoever just scanned the code should be on the list when the host looks back.
+            reload++
+        }
+    }
+    if (confirmingEnd) {
+        AlertDialog(
+            onDismissRequest = { confirmingEnd = false },
+            title = { Text("End ${event.name}?") },
+            text = { Text("Nobody else will be able to join. People who already joined can still open the event.") },
+            confirmButton = {
+                TextButton({
+                    confirmingEnd = false
+                    end()
+                }) { Text("End event") }
+            },
+            dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
+        )
+    }
+    if (confirmingRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmingRemove = false },
+            title = { Text(if (isHost) "Delete ${event.name}?" else "Leave ${event.name}?") },
+            text = {
+                Text(
+                    if (isHost) {
+                        "The event is removed for you and for everyone who joined. This can't be undone."
+                    } else {
+                        "The event leaves your list and you come off its attendee list. " +
+                            "You can join again with the code while the event is still running."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmingRemove = false
+                    remove()
+                }) { Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ confirmingRemove = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+private fun AttendeeRow(person: Attendee) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
+        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Dot(person.status.color, 12)
+    }
+}
+
 // ---------- 3. Profile ----------
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ProfileScreen(profile: Profile, onEdit: () -> Unit, onVisibilityChange: (Boolean) -> Unit) {
+fun ProfileScreen(
+    profile: Profile,
+    onEdit: () -> Unit,
+    onVisibilityChange: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val p = profile
     ScreenColumn {
-        ScreenTitle("Profile")
+        Row(verticalAlignment = Alignment.Top) {
+            Box(Modifier.weight(1f)) { ScreenTitle("Profile") }
+            IconButton(onOpenSettings) {
+                Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings")
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Avatar(p.displayName, 72)
+            Avatar(p.displayName, 72, p.avatarUrl)
             Column(Modifier.weight(1f)) {
                 Text(p.displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 if (p.bio.isNotBlank()) {
@@ -279,20 +755,6 @@ fun ProfileScreen(profile: Profile, onEdit: () -> Unit, onVisibilityChange: (Boo
         SectionCard(title = "Privacy") {
             ToggleRow("Public profile", "Anyone who scans your QR can view it", p.isPublic, onVisibilityChange)
         }
-    }
-}
-
-@Composable
-private fun Avatar(name: String, size: Int) {
-    Box(
-        Modifier.size(size.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            name.trim().take(1).uppercase().ifEmpty { "?" },
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
-        )
     }
 }
 
@@ -313,12 +775,65 @@ private fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((Str
 // ---------- 3b. Edit profile ----------
 
 @Composable
-fun EditProfileScreen(initial: Profile, email: String?, onSave: (Profile) -> Unit, onCancel: () -> Unit) {
+fun EditProfileScreen(
+    initial: Profile,
+    email: String?,
+    onUploadAvatar: suspend (Uri) -> String,
+    onSave: (Profile) -> Unit,
+    onCancel: () -> Unit,
+) {
     var name by remember { mutableStateOf(initial.displayName) }
     var bio by remember { mutableStateOf(initial.bio) }
     var preferences by remember { mutableStateOf(initial.preferences) }
     var boundaries by remember { mutableStateOf(initial.boundaries) }
     var isPublic by remember { mutableStateOf(initial.isPublic) }
+    var avatarUrl by remember { mutableStateOf(initial.avatarUrl) }
+    // A photo chosen or taken on this screen. It is only uploaded when the user taps Save.
+    // Saveable because Android may recreate the activity while the camera app is in front.
+    var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var pendingCapture by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var photoMenuOpen by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) pickedPhoto = uri
+    }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        if (saved) pickedPhoto = pendingCapture
+    }
+    fun launchCamera() {
+        // The camera app writes the photo into our cache through a FileProvider URI. A new file
+        // per capture keeps the preview from showing a previously cached shot.
+        val file = File(context.cacheDir, "captures/avatar_${System.currentTimeMillis()}.jpg")
+        file.parentFile?.mkdirs()
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        pendingCapture = uri
+        takePhoto.launch(uri)
+    }
+    val requestCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchCamera() else photoError = "Camera permission is needed to take a photo."
+    }
+
+    fun save() {
+        if (saving) return
+        saving = true
+        photoError = null
+        scope.launch {
+            try {
+                val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
+                onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                photoError = "Couldn't upload your photo. Check your connection and try again."
+            } finally {
+                saving = false
+            }
+        }
+    }
 
     ScreenColumn {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -327,14 +842,50 @@ fun EditProfileScreen(initial: Profile, email: String?, onSave: (Profile) -> Uni
             Text("Edit profile", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             TextButton(
-                onClick = { onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic)) },
-                enabled = name.isNotBlank(),
-            ) { Text("Save") }
+                onClick = ::save,
+                enabled = name.isNotBlank() && !saving,
+            ) { Text(if (saving) "Saving…" else "Save") }
         }
 
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Avatar(name, 88)
-            TextButton({}) { Text("Change photo") }
+            Avatar(name, 88, pickedPhoto ?: avatarUrl)
+            Box {
+                TextButton({ photoMenuOpen = true }, enabled = !saving) { Text("Change photo") }
+                DropdownMenu(photoMenuOpen, { photoMenuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Choose from gallery") },
+                        onClick = {
+                            photoMenuOpen = false
+                            photoError = null
+                            pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Take photo") },
+                        onClick = {
+                            photoMenuOpen = false
+                            photoError = null
+                            // Launching the camera app throws unless the declared CAMERA permission is granted.
+                            val granted = ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) ==
+                                PackageManager.PERMISSION_GRANTED
+                            if (granted) launchCamera() else requestCamera.launch(android.Manifest.permission.CAMERA)
+                        },
+                    )
+                    if (pickedPhoto != null || avatarUrl.isNotBlank()) {
+                        DropdownMenuItem(
+                            text = { Text("Remove photo") },
+                            onClick = {
+                                photoMenuOpen = false
+                                pickedPhoto = null
+                                avatarUrl = ""
+                            },
+                        )
+                    }
+                }
+            }
+            photoError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
         }
 
         SectionCard(title = "Identity") {
@@ -391,23 +942,125 @@ private fun EditableListCard(title: String, hint: String, items: List<String>, o
 
 // ---------- 4. QR ----------
 
+/**
+ * The user's own card with its QR code, plus the ways to swap: share the link, scan someone's
+ * code, or type in a link they sent. [cardLink] is null until the user's code has loaded;
+ * [cardLinkFailed] says loading it went wrong. [onCollect] receives whatever was scanned or
+ * pasted and is expected to report the outcome itself.
+ */
 @Composable
-fun QrScreen(status: CueStatus, profile: Profile) {
+fun QrScreen(
+    status: CueStatus,
+    profile: Profile,
+    cardLink: String?,
+    cardLinkFailed: Boolean,
+    onCollect: (String) -> Unit,
+) {
     var qrExpanded by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var enteringLink by rememberSaveable { mutableStateOf(false) }
     ScreenColumn {
-        ScreenTitle("My Card", "Others scan the code to collect your swap card.")
-        SwapCard(profile, status, qrId = MockData.qrId, onQrClick = { qrExpanded = true })
+        ScreenTitle("My Card", "Scan each other's code or send your link to swap cards.")
+        SwapCard(profile, status, qrId = cardLink, onQrClick = { qrExpanded = true })
+        if (cardLink == null && cardLinkFailed) {
+            Text(
+                "Couldn't load your code. Check your connection, then open this tab again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button({ sharing = true }, Modifier.weight(1f).height(52.dp)) { Text("Share") }
-            OutlinedButton({}, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
+            Button({ sharing = true }, Modifier.weight(1f).height(52.dp), enabled = cardLink != null) { Text("Share") }
+            OutlinedButton({ scanning = true }, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
+        }
+        TextButton({ enteringLink = true }, Modifier.fillMaxWidth()) { Text("Enter a link instead") }
+    }
+    if (cardLink != null) {
+        if (qrExpanded) {
+            FullScreenQr(cardLink, profile.displayName, status) { qrExpanded = false }
+        }
+        if (sharing) {
+            ShareCardSheet(profile.displayName, cardLink) { sharing = false }
         }
     }
-    if (qrExpanded) {
-        FullScreenQr(MockData.qrId, profile.displayName, status) { qrExpanded = false }
+    if (scanning) {
+        QrScanner(
+            onCode = {
+                scanning = false
+                onCollect(it)
+            },
+            onDismiss = { scanning = false },
+            hint = "Point the camera at someone's card code",
+        )
     }
-    if (sharing) {
-        ShareCardSheet(profile.displayName, MockData.shareLink) { sharing = false }
+    if (enteringLink) {
+        EnterLinkDialog(
+            onSubmit = {
+                enteringLink = false
+                onCollect(it)
+            },
+            onDismiss = { enteringLink = false },
+        )
+    }
+}
+
+// For a card link that arrived as text (a message, an email) rather than as a QR code.
+@Composable
+private fun EnterLinkDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val valid = cardTokenFrom(text) != null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Enter a card link") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Paste the link someone sent you. Pasting their whole message works too.")
+                OutlinedTextField(
+                    text, { text = it }, label = { Text("Card link") },
+                    isError = text.isNotBlank() && !valid,
+                    supportingText = if (text.isNotBlank() && !valid) { { Text("That doesn't contain a card link.") } } else null,
+                    maxLines = 4, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton({ onSubmit(text) }, enabled = valid) { Text("Swap cards") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Asks before swapping when a card link opened the app, since nobody tapped "swap" in the app itself. */
+@Composable
+fun ConfirmLinkSwapDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Swap cards?") },
+        text = { Text("You opened a card link. Swapping adds their card to your binder and puts your card in theirs.") },
+        confirmButton = { TextButton(onConfirm) { Text("Swap cards") } },
+        dismissButton = { TextButton(onDismiss) { Text("Not now") } },
+    )
+}
+
+/** Tells the user how collecting a card ended. */
+@Composable
+fun SwapResultDialog(result: SwapResult, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
+    when (result) {
+        is SwapResult.Swapped -> {
+            val whose = result.card.name.takeIf { it.isNotBlank() }?.let { "$it's" } ?: "Their"
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("Cards swapped") },
+                text = { Text("$whose card is in your binder, and yours is in theirs.") },
+                confirmButton = { TextButton(onViewBinder) { Text("View binder") } },
+                dismissButton = { TextButton(onDismiss) { Text("Done") } },
+            )
+        }
+        is SwapResult.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Couldn't swap cards") },
+            text = { Text(result.message) },
+            confirmButton = { TextButton(onDismiss) { Text("OK") } },
+        )
     }
 }
 
@@ -423,7 +1076,8 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
         ) {
             Text("Share your card", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
-                "Anyone with this link can collect your swap card.",
+                "Anyone with this link can swap cards with you. If tapping it doesn't open the app, " +
+                    "they can paste it under My Card → Enter a link instead.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -452,7 +1106,11 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "Collect my Unspoken Cues swap card: $link")
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "Swap cards with me on Unspoken Cues. Open this link on your phone, or paste it " +
+                                    "into the app under My Card → Enter a link instead: $link",
+                            )
                         }
                         context.startActivity(Intent.createChooser(send, "Send $name's card"))
                     },
@@ -466,9 +1124,22 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
 // ---------- 5. S.W.A.P. / Binder ----------
 
 @Composable
-fun BinderScreen(status: CueStatus, profile: Profile) {
+fun BinderScreen(
+    status: CueStatus,
+    profile: Profile,
+    collection: List<CollectedCard>,
+    onRemove: (CollectedCard) -> Unit,
+) {
     var opened by remember { mutableStateOf<CollectedCard?>(null) }
-    opened?.let { PersonDetail(it.profile, it.status) { opened = null } }
+    opened?.let { card ->
+        PersonDetail(
+            card.profile, card.status,
+            onRemove = {
+                opened = null
+                onRemove(card)
+            },
+        ) { opened = null }
+    }
     ScreenColumn {
         ScreenTitle("Binder", "Cards you've collected through S.W.A.P.")
         Surface(
@@ -490,8 +1161,15 @@ fun BinderScreen(status: CueStatus, profile: Profile) {
             }
         }
 
-        Text("Collection · ${MockData.collection.size}", style = MaterialTheme.typography.titleMedium)
-        MockData.collection.chunked(3).forEach { row ->
+        Text("Collection · ${collection.size}", style = MaterialTheme.typography.titleMedium)
+        if (collection.isEmpty()) {
+            Text(
+                "No cards yet. Swap with someone to add their card here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        collection.chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { card -> CollectedTile(card, Modifier.weight(1f)) { opened = card } }
                 repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
@@ -502,7 +1180,19 @@ fun BinderScreen(status: CueStatus, profile: Profile) {
 
 // Full-screen view of someone else's card (collected or at an event) with all their preferences and boundaries.
 @Composable
-private fun PersonDetail(profile: Profile, status: CueStatus, onClose: () -> Unit) {
+private fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> Unit)? = null, onClose: () -> Unit) {
+    var confirmingRemove by remember { mutableStateOf(false) }
+    if (confirmingRemove && onRemove != null) {
+        AlertDialog(
+            onDismissRequest = { confirmingRemove = false },
+            title = { Text("Remove ${profile.displayName}?") },
+            text = { Text("Their card leaves your binder, and your card is removed from theirs. You'll need to swap again to reconnect.") },
+            confirmButton = {
+                TextButton(onRemove) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ confirmingRemove = false }) { Text("Cancel") } },
+        )
+    }
     Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
@@ -520,6 +1210,11 @@ private fun PersonDetail(profile: Profile, status: CueStatus, onClose: () -> Uni
                 SwapCard(profile, status)
                 SectionCard(title = "Preferences") { ChipsOrEmpty(profile.preferences, "No preferences shared") }
                 SectionCard(title = "Boundaries") { ChipsOrEmpty(profile.boundaries, "No boundaries shared") }
+                if (onRemove != null) {
+                    TextButton({ confirmingRemove = true }, Modifier.fillMaxWidth()) {
+                        Text("Remove from binder", color = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
         }
     }
@@ -546,10 +1241,14 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     onReconnect: () -> Unit,
     onSignOut: () -> Unit,
+    onBack: () -> Unit,
 ) {
     var demoMode by remember { mutableStateOf(false) }
     ScreenColumn {
-        ScreenTitle("Settings")
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
+            Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
         SectionCard(title = "Watch") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

@@ -20,6 +20,7 @@ data class ProfileRow(
     @SerialName("is_public") val isPublic: Boolean = true,
     // Stored as the enum name (GREEN/YELLOW/RED/PURPLE).
     val status: String = CueStatus.GREEN.name,
+    @SerialName("avatar_url") val avatarUrl: String = "",
 )
 
 /** Payload used when inserting/updating a profile. Excludes server-managed columns. */
@@ -32,6 +33,7 @@ data class ProfileUpsert(
     val boundaries: List<String>,
     @SerialName("is_public") val isPublic: Boolean,
     val status: String,
+    @SerialName("avatar_url") val avatarUrl: String,
 )
 
 // ---------- Mappers ----------
@@ -42,6 +44,7 @@ fun ProfileRow.toProfile(): Profile = Profile(
     preferences = preferences,
     boundaries = boundaries,
     isPublic = isPublic,
+    avatarUrl = avatarUrl,
 )
 
 /** Parse the stored status string back into the enum, defaulting to GREEN on bad data. */
@@ -56,4 +59,5 @@ fun Profile.toUpsert(userId: String, status: CueStatus): ProfileUpsert = Profile
     boundaries = boundaries,
     isPublic = isPublic,
     status = status.name,
+    avatarUrl = avatarUrl,
 )

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,9 +19,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.theme.CueGreen
 import com.example.unspokenqueues.ui.theme.CueYellow
@@ -105,5 +109,31 @@ fun Chip(text: String, modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
+    }
+}
+
+/**
+ * Round profile photo. [image] is anything Coil can load (a URL or a local Uri); the person's
+ * initial shows when it is null or blank, while it loads, and if it fails to load.
+ */
+@Composable
+fun Avatar(name: String, size: Int, image: Any? = null) {
+    Box(
+        Modifier.size(size.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            name.trim().take(1).uppercase().ifEmpty { "?" },
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
+        if (image != null && image != "") {
+            AsyncImage(
+                model = image,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(CircleShape),
+            )
+        }
     }
 }
