@@ -1,6 +1,10 @@
 package com.example.unspokenqueues.ui.screens
 
-import android.content.ClipboardManager
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.Clipboard
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.NativeClipboard
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -13,7 +17,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
@@ -62,6 +65,22 @@ private class FakeEventRepository(
     }
 }
 
+/**
+ * Stands in for the device clipboard. An emulator shares its real clipboard with the computer it
+ * runs on, so copying for real would overwrite whatever the developer had copied.
+ */
+private class FakeClipboard : Clipboard {
+    var entry: ClipEntry? = null
+
+    override suspend fun getClipEntry(): ClipEntry? = entry
+
+    override suspend fun setClipEntry(clipEntry: ClipEntry?) {
+        entry = clipEntry
+    }
+
+    override val nativeClipboard: NativeClipboard get() = error("The fake has no system clipboard")
+}
+
 @RunWith(AndroidJUnit4::class)
 class EventsScreenTest {
 
@@ -84,6 +103,7 @@ class EventsScreenTest {
 
     private val opened = mutableListOf<Event>()
     private val clicks = mutableListOf<String>()
+    private val clipboard = FakeClipboard()
 
     private fun showList(repo: EventRepository, userId: String = "host") {
         compose.setContent {
@@ -96,12 +116,14 @@ class EventsScreenTest {
     private fun showDetail(repo: EventRepository, userId: String, event: Event = mixer) {
         compose.setContent {
             UnspokenQueuesTheme {
-                EventDetailScreen(
-                    repo, userId, CueStatus.GREEN, event,
-                    onEventChange = { opened += it },
-                    onRemoved = { clicks += "removed" },
-                    onBack = { clicks += "back" },
-                )
+                CompositionLocalProvider(LocalClipboard provides clipboard) {
+                    EventDetailScreen(
+                        repo, userId, CueStatus.GREEN, event,
+                        onEventChange = { opened += it },
+                        onRemoved = { clicks += "removed" },
+                        onBack = { clicks += "back" },
+                    )
+                }
             }
         }
     }
@@ -231,9 +253,7 @@ class EventsScreenTest {
         compose.onNodeWithText("Copy code").performClick()
 
         compose.onNodeWithText("Copied ✓").assertIsDisplayed()
-        val clipboard = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(ClipboardManager::class.java)
-        val copiedText = compose.runOnUiThread { clipboard.primaryClip?.getItemAt(0)?.text?.toString() }
-        assertEquals("MIXER2", copiedText)
+        assertEquals("MIXER2", clipboard.entry?.clipData?.getItemAt(0)?.text?.toString())
     }
 
     @Test

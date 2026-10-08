@@ -59,6 +59,13 @@ class AuthHelpersTest {
     }
 
     @Test
+    fun signUpThatStillNeedsConfirming_pointsAtTheEmail() {
+        val message = authFailureMessage(EmailConfirmationRequiredException())
+        assert(message.contains("confirmation link")) { message }
+        assertNotEquals(generic, message)
+    }
+
+    @Test
     fun theExceptionsOwnText_isNeverShown() {
         val secretive = "HTTP request to https://abc.supabase.co/auth/v1/token failed"
         listOf(IOException(secretive), IllegalStateException(secretive), RuntimeException(secretive)).forEach {

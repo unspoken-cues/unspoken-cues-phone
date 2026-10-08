@@ -216,6 +216,36 @@ class ProfileSetupWizardTest {
         )
     }
 
+    @Test
+    fun whenSavingFails_itSaysSo_andFinishCanBeTriedAgain() {
+        var failSave = true
+        compose.setContent {
+            UnspokenQueuesTheme {
+                ProfileSetupWizard(
+                    initial = Profile("Ana", "", listOf("Direct feedback"), emptyList(), isPublic = true),
+                    onUploadAvatar = { "https://x.test/uploaded.jpg" },
+                    onFinish = {
+                        if (failSave) error("offline")
+                        finished += it
+                    },
+                )
+            }
+        }
+        repeat(5) { next() }
+
+        compose.onNodeWithText("Finish").performClick()
+
+        compose.onNodeWithText("Couldn't save your profile. Check your connection and try again.").assertIsDisplayed()
+        compose.onNodeWithText("Step 6 of 6").assertIsDisplayed()
+        assertEquals(emptyList<Profile>(), finished)
+
+        failSave = false
+        compose.onNodeWithText("Finish").assertIsEnabled().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf(Profile("Ana", "", listOf("Direct feedback"), emptyList(), true)), finished)
+    }
+
     // ---------- Back ----------
 
     @Test

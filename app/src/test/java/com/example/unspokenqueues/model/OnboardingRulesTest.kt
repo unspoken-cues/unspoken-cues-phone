@@ -1,5 +1,6 @@
 package com.example.unspokenqueues.model
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -76,5 +77,35 @@ class OnboardingRulesTest {
         assertTrue(hasPreferenceOrBoundary(profile(name = "", boundaries = listOf("No photos"))))
         assertFalse(hasPreferenceOrBoundary(profile(name = "Sam")))
         assertFalse(hasPreferenceOrBoundary(profile(name = "Sam", preferences = listOf(" "), boundaries = listOf(""))))
+    }
+
+    // ---------- appPhase ----------
+
+    @Test
+    fun signedOut_winsOverEverythingElse() {
+        for (complete in listOf(null, false, true)) {
+            for (setupDone in listOf(false, true)) {
+                assertEquals(AppPhase.SIGNED_OUT, appPhase(signedIn = false, onboardingComplete = complete, profileSetupDone = setupDone))
+            }
+        }
+    }
+
+    @Test
+    fun untilTheFlagIsKnown_onlyALoadingScreenShows() {
+        assertEquals(AppPhase.LOADING, appPhase(signedIn = true, onboardingComplete = null, profileSetupDone = false))
+        assertEquals(AppPhase.LOADING, appPhase(signedIn = true, onboardingComplete = null, profileSetupDone = true))
+    }
+
+    @Test
+    fun newAccount_setsUpTheProfile_thenTakesTheTutorial() {
+        assertEquals(AppPhase.PROFILE_SETUP, appPhase(signedIn = true, onboardingComplete = false, profileSetupDone = false))
+        assertEquals(AppPhase.TUTORIAL, appPhase(signedIn = true, onboardingComplete = false, profileSetupDone = true))
+    }
+
+    @Test
+    fun returningUser_goesStraightToTheApp() {
+        assertEquals(AppPhase.MAIN, appPhase(signedIn = true, onboardingComplete = true, profileSetupDone = false))
+        // The tutorial's last step sets the flag; a leftover "setup done" must not send them back.
+        assertEquals(AppPhase.MAIN, appPhase(signedIn = true, onboardingComplete = true, profileSetupDone = true))
     }
 }

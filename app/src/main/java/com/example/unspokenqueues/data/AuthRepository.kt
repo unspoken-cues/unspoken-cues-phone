@@ -9,11 +9,15 @@ import io.github.jan.supabase.auth.user.UserInfo
 import kotlinx.coroutines.flow.Flow
 import java.io.IOException
 
+/** The account was created, but there is no session until the user confirms their email. */
+class EmailConfirmationRequiredException : Exception("Email confirmation required")
+
 /**
  * What to tell the user when signing in or creating an account failed. The exception's own
  * message is never shown: it is written for developers and carries the request URL and headers.
  */
 fun authFailureMessage(e: Throwable): String = when (e) {
+    is EmailConfirmationRequiredException -> "Almost there. Open the confirmation link we emailed you, then sign in."
     is AuthRestException -> authErrorMessage(e.errorCode)
     // The request never got an answer: offline, DNS failure or a timeout.
     is IOException -> "Couldn't reach the server. Check your connection and try again."
@@ -68,14 +72,17 @@ class AuthRepository(
     }
 
     /**
-     * Creates a new account. If the project requires email confirmation, there will be no active
-     * session until the user confirms; [currentUserId] stays null in that case.
+     * Creates a new account and signs it in. If the project requires email confirmation there is
+     * no session until the user confirms, which is reported as an
+     * [EmailConfirmationRequiredException] so the caller can tell them to check their inbox.
      */
     suspend fun signUp(email: String, password: String) {
         auth.signUpWith(Email) {
             this.email = email.trim()
             this.password = password
         }
+        // signUpWith has already stored the session if the server sent one.
+        if (auth.currentSessionOrNull() == null) throw EmailConfirmationRequiredException()
     }
 
     suspend fun signOut() {

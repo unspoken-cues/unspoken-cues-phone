@@ -55,13 +55,14 @@ private enum class SetupStep(val title: String, val prompt: String) {
  * First-run profile setup: a Back/Next wizard that asks for one thing per step, starting from
  * [initial]. The name step can't be passed without a display name, and Finish stays off until
  * [canFinishProfileSetup] is satisfied. A chosen photo is uploaded with [onUploadAvatar] when the
- * user finishes; [onFinish] then receives the completed profile.
+ * user finishes; [onFinish] then receives the completed profile to save. If either throws, the
+ * wizard says so and stays put so the user can try again.
  */
 @Composable
 fun ProfileSetupWizard(
     initial: Profile,
     onUploadAvatar: suspend (Uri) -> String,
-    onFinish: (Profile) -> Unit,
+    onFinish: suspend (Profile) -> Unit,
 ) {
     var stepIndex by rememberSaveable { mutableIntStateOf(0) }
     val step = SetupStep.entries[stepIndex]
@@ -79,7 +80,7 @@ fun ProfileSetupWizard(
     // Text typed into the current list step's field but not added to the list yet.
     var entry by rememberSaveable { mutableStateOf("") }
     var finishing by remember { mutableStateOf(false) }
-    var photoError by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     val draft = Profile(name, bio, preferences, boundaries, isPublic, avatarUrl)
@@ -98,15 +99,20 @@ fun ProfileSetupWizard(
     fun finish() {
         if (finishing) return
         finishing = true
-        photoError = null
+        error = null
         scope.launch {
+            var failure = "Couldn't upload your photo. Check your connection and try again, or go back and remove the photo."
             try {
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
+                // Keep the uploaded URL, so trying again after a failed save doesn't upload twice.
+                avatarUrl = url
+                pickedPhoto = null
+                failure = "Couldn't save your profile. Check your connection and try again."
                 onFinish(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                photoError = "Couldn't upload your photo. Check your connection and try again, or go back and remove the photo."
+                error = failure
             } finally {
                 finishing = false
             }
@@ -182,7 +188,7 @@ fun ProfileSetupWizard(
                             pickedPhoto = null
                             avatarUrl = ""
                         },
-                        onError = { photoError = it },
+                        onError = { error = it },
                     )
                 }
                 SetupStep.PRIVACY -> SectionCard {
@@ -200,7 +206,7 @@ fun ProfileSetupWizard(
                     isError = true,
                 )
             }
-            photoError?.let { Guidance(it, isError = true) }
+            error?.let { Guidance(it, isError = true) }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

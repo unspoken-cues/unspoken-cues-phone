@@ -67,6 +67,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +76,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -305,6 +308,42 @@ private fun AuthForm(
             } else {
                 Text(submitLabel)
             }
+        }
+    }
+}
+
+// ---------- 1b. Loading the account ----------
+
+/**
+ * Shown after sign-in until the account's profile has been read, which decides between
+ * onboarding and the app. [failed] swaps the spinner for a way to retry or sign out.
+ */
+@Composable
+fun AccountLoadingScreen(failed: Boolean, onRetry: () -> Unit, onSignOut: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (!failed) {
+            CircularProgressIndicator()
+        } else {
+            Text(
+                "Couldn't load your account",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Check your connection and try again.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(onRetry, Modifier.fillMaxWidth().height(52.dp)) { Text("Try again") }
+            TextButton(onSignOut, Modifier.fillMaxWidth()) { Text("Sign out") }
         }
     }
 }
@@ -644,7 +683,8 @@ fun EventDetailScreen(
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+    // Compose's clipboard rather than the system service, so a test can swap in a fake one.
+    val clipboard = LocalClipboard.current
 
     LaunchedEffect(event.id, reload) {
         try {
@@ -706,9 +746,10 @@ fun EventDetailScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(
                         onClick = {
-                            val clipboard = context.getSystemService(ClipboardManager::class.java)
-                            clipboard.setPrimaryClip(ClipData.newPlainText("Event join code", event.joinCode))
-                            copied = true
+                            scope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Event join code", event.joinCode)))
+                                copied = true
+                            }
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
                     ) { Text(if (copied) "Copied ✓" else "Copy code") }
@@ -1405,7 +1446,14 @@ fun SettingsScreen(
     onSignOut: () -> Unit,
     onBack: () -> Unit,
 ) {
-    var demoMode by remember { mutableStateOf(false) }
+    // The tab tour, replayed on demand over this screen. Watching it again changes nothing that
+    // is saved, including whether the account has finished onboarding.
+    var replayingTutorial by rememberSaveable { mutableStateOf(false) }
+    if (replayingTutorial) {
+        BackHandler { replayingTutorial = false }
+        TabTutorialScreen(onFinish = { replayingTutorial = false })
+        return
+    }
     ScreenColumn {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
@@ -1441,7 +1489,15 @@ fun SettingsScreen(
             )
         }
         SectionCard(title = "App") {
-            ToggleRow("Tutorial / demo mode", "Walk through the app with sample data", demoMode) { demoMode = it }
+            Column {
+                Text("Tutorial", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "A quick tour of what each tab is for",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton({ replayingTutorial = true }, Modifier.fillMaxWidth()) { Text("Replay tutorial") }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Text("About Unspoken Cues", style = MaterialTheme.typography.bodyLarge)
         }
