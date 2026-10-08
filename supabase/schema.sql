@@ -440,6 +440,13 @@ revoke execute on function public.swap_by_card_token(text) from public, anon;
 grant  execute on function public.swap_by_card_token(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
+-- 13. Onboarding: whether the user has finished the first-run walkthrough.
+--     False for new rows; the app sets it to true once and never back.
+-- ---------------------------------------------------------------------------
+alter table public.profiles
+  add column if not exists onboarding_complete boolean not null default false;
+
+-- ---------------------------------------------------------------------------
 -- Manual test notes
 -- ---------------------------------------------------------------------------
 -- 1. Paste this whole file into the SQL editor and run it. Run it a second time:
@@ -448,7 +455,8 @@ grant  execute on function public.swap_by_card_token(text) to authenticated;
 -- 2. Check that everything exists (each query should return the rows noted):
 --
 --    select column_name from information_schema.columns
---     where table_schema = 'public' and table_name = 'profiles' and column_name = 'avatar_url';  -- 1 row
+--     where table_schema = 'public' and table_name = 'profiles'
+--       and column_name in ('avatar_url', 'onboarding_complete');  -- 2 rows
 --
 --    select tablename, rowsecurity from pg_tables
 --     where schemaname = 'public' and tablename in ('events', 'event_members');  -- 2 rows, both true
