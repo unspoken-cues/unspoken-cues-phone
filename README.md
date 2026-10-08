@@ -11,6 +11,15 @@ Foundation phase — see [Issues](../../issues) and the org [Project board](http
 - Contribution workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security/secret handling: [SECURITY.md](SECURITY.md)
 
+## Emulator can't reach the network
+If sign-in or loading times out on the emulator, it is probably failing to resolve names through the host's DNS settings. Close the emulator, then start it from a terminal with public DNS servers instead (it opens in its own window rather than inside Android Studio):
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Pixel_7 -dns-server 8.8.8.8,1.1.1.1
+```
+
+Replace `Pixel_7` with your own device name; `emulator.exe -list-avds` shows them. The setting only lasts for that run, so use this command each time instead of the Run button's device launcher.
+
 ## Product context
 Full product handoff lives outside this repo. Key rules:
 - Exactly four statuses, one active at a time.

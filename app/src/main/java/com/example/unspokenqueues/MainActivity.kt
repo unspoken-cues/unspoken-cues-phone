@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.unspokenqueues.data.AuthRepository
 import com.example.unspokenqueues.data.AvatarRepository
+import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ProfileRepository
 import com.example.unspokenqueues.data.SwapRepository
 import com.example.unspokenqueues.data.swapFailureMessage
@@ -47,6 +49,7 @@ import com.example.unspokenqueues.data.toCueStatus
 import com.example.unspokenqueues.data.toProfile
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
+import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
@@ -55,8 +58,10 @@ import com.example.unspokenqueues.model.cardLink
 import com.example.unspokenqueues.model.cardTokenFrom
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.ConfirmLinkSwapDialog
+import com.example.unspokenqueues.ui.screens.CreateEventScreen
 import com.example.unspokenqueues.ui.screens.CueScreen
 import com.example.unspokenqueues.ui.screens.EditProfileScreen
+import com.example.unspokenqueues.ui.screens.EventDetailScreen
 import com.example.unspokenqueues.ui.screens.EventsScreen
 import com.example.unspokenqueues.ui.screens.ProfileScreen
 import com.example.unspokenqueues.ui.screens.QrScreen
@@ -125,6 +130,14 @@ enum class Tab(val label: String, @DrawableRes val icon: Int) {
     PROFILE("Profile", R.drawable.ic_profile),
 }
 
+// Keeps the open event across rotation and process restore; an Event can't go in a Bundle as is.
+private val EventSaver = listSaver<Event?, Any>(
+    save = { e -> if (e == null) emptyList() else listOf(e.id, e.hostId, e.name, e.details, e.joinCode, e.active) },
+    restore = { v ->
+        if (v.isEmpty()) null else Event(v[0] as String, v[1] as String, v[2] as String, v[3] as String, v[4] as String, v[5] as Boolean)
+    },
+)
+
 @Composable
 fun UnspokenCuesApp(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -136,16 +149,23 @@ fun UnspokenCuesApp(
     val authRepo = remember { AuthRepository() }
     val profileRepo = remember { ProfileRepository() }
     val swapRepo = remember { SwapRepository() }
+    val eventRepo = remember { EventRepository() }
     val avatarRepo = remember { AvatarRepository() }
     val contentResolver = LocalContext.current.contentResolver
 
     var signedIn by rememberSaveable { mutableStateOf(authRepo.currentUser() != null) }
+    // Kept as state for the event screens, which need it while they are on screen. Asking the
+    // auth client each time would give null whenever the session is briefly re-initializing.
+    var userId by rememberSaveable { mutableStateOf(authRepo.currentUserId()) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
     var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
     var watch by rememberSaveable { mutableStateOf(WatchConnection.CONNECTED) }
     var profile by remember { mutableStateOf(MockData.profile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
     var showingSettings by rememberSaveable { mutableStateOf(false) }
+    var creatingEvent by rememberSaveable { mutableStateOf(false) }
+    // The event whose detail screen is open, if any.
+    var openEvent by rememberSaveable(stateSaver = EventSaver) { mutableStateOf<Event?>(null) }
     var collection by remember { mutableStateOf<List<CollectedCard>>(emptyList()) }
     // The secret token behind this user's QR code and share link; null until it has loaded.
     var cardToken by rememberSaveable { mutableStateOf<String?>(null) }
@@ -162,8 +182,17 @@ fun UnspokenCuesApp(
             // time the app is backgrounded (e.g. while the camera is open); treating that as signed
             // out would flash the sign-in screen and throw away whatever screen the user was on.
             when (s) {
-                is SessionStatus.Authenticated -> signedIn = true
-                is SessionStatus.NotAuthenticated -> signedIn = false
+                is SessionStatus.Authenticated -> {
+                    signedIn = true
+                    userId = authRepo.currentUserId()
+                }
+                is SessionStatus.NotAuthenticated -> {
+                    signedIn = false
+                    userId = null
+                    // The next account to sign in must not land in this one's event.
+                    creatingEvent = false
+                    openEvent = null
+                }
                 else -> Unit
             }
         }
@@ -266,6 +295,8 @@ fun UnspokenCuesApp(
                 swapResult = null
                 editingProfile = false
                 showingSettings = false
+                creatingEvent = false
+                openEvent = null
                 tab = Tab.BINDER
             },
             onDismiss = { swapResult = null },
@@ -332,6 +363,45 @@ fun UnspokenCuesApp(
         return
     }
 
+    // Hosting an event and an event's detail are reached from the Events tab and cover it.
+    val uid = userId
+    if (creatingEvent && uid != null) {
+        BackHandler { creatingEvent = false }
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                CreateEventScreen(
+                    repo = eventRepo,
+                    userId = uid,
+                    onCreated = {
+                        creatingEvent = false
+                        openEvent = it
+                    },
+                    onCancel = { creatingEvent = false },
+                )
+            }
+        }
+        return
+    }
+
+    val event = openEvent
+    if (event != null && uid != null) {
+        BackHandler { openEvent = null }
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                EventDetailScreen(
+                    repo = eventRepo,
+                    userId = uid,
+                    status = status,
+                    event = event,
+                    onEventChange = { openEvent = it },
+                    onRemoved = { openEvent = null },
+                    onBack = { openEvent = null },
+                )
+            }
+        }
+        return
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -355,7 +425,14 @@ fun UnspokenCuesApp(
                     val uid = authRepo.currentUserId()
                     if (uid != null) scope.launch { runCatching { profileRepo.updateStatus(uid, newStatus) } }
                 }
-                Tab.EVENTS -> EventsScreen()
+                Tab.EVENTS -> if (uid != null) {
+                    EventsScreen(
+                        repo = eventRepo,
+                        userId = uid,
+                        onHost = { creatingEvent = true },
+                        onOpen = { openEvent = it },
+                    )
+                }
                 Tab.QR -> QrScreen(
                     status = status,
                     profile = profile,

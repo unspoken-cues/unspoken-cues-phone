@@ -54,7 +54,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,22 +70,30 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.example.unspokenqueues.R
+import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.authFailureMessage
+import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.JOIN_CODE_MAX_LENGTH
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.model.cardTokenFrom
+import com.example.unspokenqueues.model.isValidJoinCode
+import com.example.unspokenqueues.model.visibleAttendees
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.Dot
@@ -93,6 +103,7 @@ import com.example.unspokenqueues.ui.components.QrScanner
 import com.example.unspokenqueues.ui.components.SectionCard
 import com.example.unspokenqueues.ui.components.SwapCard
 import com.example.unspokenqueues.ui.components.WatchPill
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
@@ -132,8 +143,10 @@ fun SignInScreen(
         scope.launch {
             try {
                 if (signUp) onSignUp(email, password) else onSignIn(email, password)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                error = e.message ?: "Something went wrong. Please try again."
+                error = authFailureMessage(e)
             } finally {
                 loading = false
             }
@@ -227,37 +240,6 @@ fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueSta
 }
 
 @Composable
-private fun EventAttendees(event: Event, attendees: List<Attendee>) {
-    Column(Modifier.padding(top = 8.dp)) {
-        Text("At this event", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "${event.name} · ${event.details}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    SectionCard(title = "${attendees.size} registered") {
-        attendees.forEachIndexed { i, person ->
-            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-            AttendeeRow(person)
-        }
-    }
-}
-
-@Composable
-private fun AttendeeRow(person: Attendee) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
-        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Dot(person.status.color, 12)
-    }
-}
-
-@Composable
 private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Surface(
         modifier = modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick),
@@ -275,19 +257,467 @@ private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onC
 
 // ---------- 2. Events ----------
 
-// Placeholder: the events experience is built out in a later sprint.
+/**
+ * The events the user hosts or has joined, plus the two ways into a new one: host it, or join
+ * with the host's code (typed or scanned). [onOpen] receives an event the user tapped or just
+ * joined.
+ */
 @Composable
-fun EventsScreen() {
+fun EventsScreen(
+    repo: EventRepository,
+    userId: String,
+    onHost: () -> Unit,
+    onOpen: (Event) -> Unit,
+) {
+    // Null until the first load answers.
+    var events by remember { mutableStateOf<List<Event>?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var joinOpen by rememberSaveable { mutableStateOf(false) }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var joining by remember { mutableStateOf(false) }
+    var joinError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(userId) {
+        try {
+            events = repo.myEvents(userId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+        }
+    }
+
+    fun join(text: String) {
+        if (joining) return
+        joinError = null
+        joining = true
+        scope.launch {
+            try {
+                onOpen(repo.joinByCode(text))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                joinError = joinFailureMessage((e as? PostgrestRestException)?.code)
+            } finally {
+                joining = false
+            }
+        }
+    }
+
     ScreenColumn {
-        ScreenTitle("Events", "Find and join events near you.")
-        SectionCard {
-            Text("Coming soon", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Events you join will show up here.",
+        ScreenTitle("Events", "Host an event, or join one with its code.")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onHost, Modifier.weight(1f).height(52.dp)) { Text("Host event") }
+            OutlinedButton({ joinOpen = true }, Modifier.weight(1f).height(52.dp)) { Text("Join event") }
+        }
+
+        Text("My events", style = MaterialTheme.typography.titleMedium)
+        val loaded = events
+        when {
+            loaded == null && loadFailed -> Text(
+                "Couldn't load your events. Check your connection, then open this tab again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            loaded == null -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            loaded.isEmpty() -> Text(
+                "No events yet. Host one, or join with a code from the host.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            else -> loaded.forEach { event ->
+                EventListItem(event, hosting = event.hostId == userId) { onOpen(event) }
+            }
         }
+    }
+
+    // Hidden while the scanner is up so the two dialogs don't stack.
+    if (joinOpen && !scanning) {
+        JoinEventDialog(
+            code = code,
+            onCodeChange = {
+                code = it.trim().uppercase().take(JOIN_CODE_MAX_LENGTH)
+                joinError = null
+            },
+            joining = joining,
+            error = joinError,
+            onJoin = { join(code) },
+            onScan = { scanning = true },
+            onDismiss = {
+                joinOpen = false
+                code = ""
+                joinError = null
+            },
+        )
+    }
+    if (scanning) {
+        QrScanner(
+            onCode = { scanned ->
+                scanning = false
+                // The camera reads any QR code, e.g. someone's card instead of the event's.
+                if (isValidJoinCode(scanned)) {
+                    code = scanned.trim().uppercase()
+                    join(scanned)
+                } else {
+                    joinError = "That QR code isn't an event code."
+                }
+            },
+            onDismiss = { scanning = false },
+            hint = "Point the camera at the event's QR code",
+        )
+    }
+}
+
+@Composable
+private fun EventListItem(event: Event, hosting: Boolean, onClick: () -> Unit) {
+    SectionCard(Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(event.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (event.details.isNotBlank()) {
+                    Text(
+                        event.details,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Chip(
+                when {
+                    !event.active -> "Ended"
+                    hosting -> "Hosting"
+                    else -> "Joined"
+                },
+            )
+        }
+    }
+}
+
+// The way into someone else's event: type the host's code, or scan the QR code they are showing.
+@Composable
+private fun JoinEventDialog(
+    code: String,
+    onCodeChange: (String) -> Unit,
+    joining: Boolean,
+    error: String?,
+    onJoin: () -> Unit,
+    onScan: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val canJoin = isValidJoinCode(code) && !joining
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Join an event") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Enter the code from the host, or scan the QR code they're showing.")
+                OutlinedTextField(
+                    code, onCodeChange, label = { Text("Event code") }, singleLine = true,
+                    enabled = !joining,
+                    isError = error != null,
+                    supportingText = if (error != null) { { Text(error) } } else null,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Characters,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { if (canJoin) onJoin() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onScan, Modifier.fillMaxWidth(), enabled = !joining) { Text("Scan QR code") }
+            }
+        },
+        confirmButton = { TextButton(onJoin, enabled = canJoin) { Text(if (joining) "Joining…" else "Join") } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+// ---------- 2b. Host an event ----------
+
+private const val EVENT_NAME_MAX_LENGTH = 60
+private const val EVENT_DETAILS_MAX_LENGTH = 200
+
+@Composable
+fun CreateEventScreen(
+    repo: EventRepository,
+    userId: String,
+    onCreated: (Event) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var details by rememberSaveable { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun create() {
+        if (creating) return
+        creating = true
+        error = null
+        scope.launch {
+            try {
+                onCreated(repo.createEvent(userId, name, details))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = "Couldn't create the event. Check your connection and try again."
+            } finally {
+                creating = false
+            }
+        }
+    }
+
+    ScreenColumn {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onCancel) { Text("Cancel") }
+            Spacer(Modifier.weight(1f))
+            Text("Host an event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            TextButton(
+                onClick = ::create,
+                enabled = name.isNotBlank() && !creating,
+            ) { Text(if (creating) "Creating…" else "Create") }
+        }
+
+        SectionCard(title = "Event") {
+            OutlinedTextField(
+                name, { if (it.length <= EVENT_NAME_MAX_LENGTH) name = it }, label = { Text("Event name") },
+                singleLine = true, enabled = !creating, modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                details, { if (it.length <= EVENT_DETAILS_MAX_LENGTH) details = it }, label = { Text("Details") },
+                placeholder = { Text("e.g. Friday 7 PM, Room 204") },
+                supportingText = { Text("${details.length}/$EVENT_DETAILS_MAX_LENGTH") },
+                minLines = 2, maxLines = 4, enabled = !creating, modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+        Text(
+            "You'll get a code and a QR code for people to join with. As the host you see every attendee's status.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// ---------- 2c. Event detail ----------
+
+/**
+ * One event: its attendees, and for the host the join QR and the way to end it. Anyone can take
+ * the event off their list: an attendee leaves it, the host deletes it for everyone. [status] is
+ * the viewer's own cue, which colours the join QR's frame. [onEventChange] receives the event
+ * once the host has ended it; [onRemoved] is called once the viewer has left or deleted it.
+ */
+@Composable
+fun EventDetailScreen(
+    repo: EventRepository,
+    userId: String,
+    status: CueStatus,
+    event: Event,
+    onEventChange: (Event) -> Unit,
+    onRemoved: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val isHost = event.hostId == userId
+    // Null until the first load answers.
+    var attendees by remember { mutableStateOf<List<Attendee>?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    // Bumped to load the attendee list again.
+    var reload by remember { mutableIntStateOf(0) }
+    var showingQr by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    var confirmingEnd by remember { mutableStateOf(false) }
+    var confirmingRemove by remember { mutableStateOf(false) }
+    // True while ending, leaving or deleting is in flight; only one runs at a time.
+    var working by remember { mutableStateOf(false) }
+    var actionError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(event.id, reload) {
+        try {
+            attendees = repo.eventAttendees(event.id)
+            loadFailed = false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+        }
+    }
+
+    fun perform(failure: String, action: suspend () -> Unit) {
+        if (working) return
+        working = true
+        actionError = null
+        scope.launch {
+            try {
+                action()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionError = failure
+            } finally {
+                working = false
+            }
+        }
+    }
+
+    fun end() = perform("Couldn't end the event. Check your connection and try again.") {
+        repo.endEvent(event.id)
+        onEventChange(event.copy(active = false))
+    }
+
+    fun remove() = perform(
+        if (isHost) "Couldn't delete the event. Check your connection and try again."
+        else "Couldn't leave the event. Check your connection and try again.",
+    ) {
+        if (isHost) repo.deleteEvent(event.id) else repo.leaveEvent(event.id, userId)
+        onRemoved()
+    }
+
+    ScreenColumn {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
+            Text("Event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
+        ScreenTitle(event.name, event.details.takeIf { it.isNotBlank() })
+
+        if (!event.active) {
+            Text(
+                "This event has ended. Nobody else can join.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else if (isHost) {
+            SectionCard(title = "Join code") {
+                Text(event.joinCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Event join code", event.joinCode))
+                            copied = true
+                        },
+                        modifier = Modifier.weight(1f).height(52.dp),
+                    ) { Text(if (copied) "Copied ✓" else "Copy code") }
+                    Button({ showingQr = true }, Modifier.weight(1f).height(52.dp)) { Text("Show join QR") }
+                }
+            }
+        }
+
+        // The rule lives in visibleAttendees: the host sees everyone, others only green and yellow.
+        val visible = attendees?.let { visibleAttendees(userId, event.hostId, it) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (visible == null) "Attendees" else "Attendees · ${visible.size}",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextButton({ reload++ }) { Text("Refresh") }
+        }
+        if (loadFailed) {
+            Text(
+                "Couldn't load attendees. Check your connection, then refresh.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        when {
+            visible == null -> if (!loadFailed) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            visible.isEmpty() -> Text(
+                if (isHost && event.active) "Nobody has joined yet. Show the join QR or share the code." else "Nobody to show yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> SectionCard {
+                visible.forEachIndexed { i, person ->
+                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    AttendeeRow(person)
+                }
+            }
+        }
+        if (!isHost) {
+            Text(
+                "You see attendees who are green or yellow. The host sees everyone's status.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        actionError?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
+        if (isHost && event.active) {
+            OutlinedButton({ confirmingEnd = true }, Modifier.fillMaxWidth().height(52.dp), enabled = !working) {
+                Text("End event")
+            }
+        }
+        TextButton({ confirmingRemove = true }, Modifier.fillMaxWidth(), enabled = !working) {
+            Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error)
+        }
+    }
+
+    if (showingQr) {
+        FullScreenQr(event.joinCode, event.name, status) {
+            showingQr = false
+            // Whoever just scanned the code should be on the list when the host looks back.
+            reload++
+        }
+    }
+    if (confirmingEnd) {
+        AlertDialog(
+            onDismissRequest = { confirmingEnd = false },
+            title = { Text("End ${event.name}?") },
+            text = { Text("Nobody else will be able to join. People who already joined can still open the event.") },
+            confirmButton = {
+                TextButton({
+                    confirmingEnd = false
+                    end()
+                }) { Text("End event") }
+            },
+            dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
+        )
+    }
+    if (confirmingRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmingRemove = false },
+            title = { Text(if (isHost) "Delete ${event.name}?" else "Leave ${event.name}?") },
+            text = {
+                Text(
+                    if (isHost) {
+                        "The event is removed for you and for everyone who joined. This can't be undone."
+                    } else {
+                        "The event leaves your list and you come off its attendee list. " +
+                            "You can join again with the code while the event is still running."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton({
+                    confirmingRemove = false
+                    remove()
+                }) { Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton({ confirmingRemove = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+@Composable
+private fun AttendeeRow(person: Attendee) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
+        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Dot(person.status.color, 12)
     }
 }
 

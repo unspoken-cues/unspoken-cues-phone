@@ -239,6 +239,7 @@ alter table public.event_members enable row level security;
 drop policy if exists "Users can join as themselves"     on public.event_members;
 drop policy if exists "Members can read co-members"      on public.event_members;
 drop policy if exists "Host can read event members"      on public.event_members;
+drop policy if exists "Users can leave events"           on public.event_members;
 
 -- Any signed-in user may add a row for themselves (never for someone else).
 create policy "Users can join as themselves"
@@ -259,6 +260,11 @@ create policy "Host can read event members"
       where e.id = event_members.event_id and e.host_id = auth.uid()
     )
   );
+
+-- Leaving an event removes the caller's own membership row (never someone else's).
+create policy "Users can leave events"
+  on public.event_members for delete
+  using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- 10. join_event_by_code: look up an active event by its join code and add the
@@ -450,7 +456,7 @@ grant  execute on function public.swap_by_card_token(text) to authenticated;
 --    select tablename, policyname from pg_policies
 --     where (schemaname = 'public' and tablename in ('events', 'event_members'))
 --        or (schemaname = 'storage' and policyname ilike '%avatar%')
---     order by 1, 2;  -- 5 on events, 3 on event_members, 4 on objects
+--     order by 1, 2;  -- 5 on events, 4 on event_members, 4 on objects
 --
 --    select id, public from storage.buckets where id = 'avatars';  -- 1 row, public = true
 --
