@@ -30,6 +30,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Supabase recovery emails return to the new-password screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="unspokencues" android:host="password-reset" />
+            </intent-filter>
+
             <!-- Card links (unspokencues://card/<token>) open the app to swap cards. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

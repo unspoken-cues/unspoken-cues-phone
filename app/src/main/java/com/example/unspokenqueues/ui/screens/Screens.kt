@@ -126,7 +126,7 @@ private fun ScreenColumn(content: @Composable () -> Unit) {
 
 // ---------- 1. Welcome / Sign in / Create account ----------
 
-private enum class AuthStep { WELCOME, SIGN_IN, CREATE_ACCOUNT }
+private enum class AuthStep { WELCOME, SIGN_IN, CREATE_ACCOUNT, FORGOT_PASSWORD }
 
 /**
  * What a signed-out user sees: a welcome screen that leads to the sign-in or the create-account
@@ -137,18 +137,27 @@ private enum class AuthStep { WELCOME, SIGN_IN, CREATE_ACCOUNT }
 fun AuthFlow(
     onSignIn: suspend (email: String, password: String) -> Unit,
     onSignUp: suspend (email: String, password: String) -> Unit,
+    onPasswordReset: suspend (email: String) -> Unit,
+    startAtSignIn: Boolean = false,
 ) {
-    var step by rememberSaveable { mutableStateOf(AuthStep.WELCOME) }
+    var step by rememberSaveable { mutableStateOf(if (startAtSignIn) AuthStep.SIGN_IN else AuthStep.WELCOME) }
+    fun back() {
+        step = if (step == AuthStep.FORGOT_PASSWORD) AuthStep.SIGN_IN else AuthStep.WELCOME
+    }
     when (step) {
         AuthStep.WELCOME -> WelcomeScreen(
             onSignIn = { step = AuthStep.SIGN_IN },
             onCreateAccount = { step = AuthStep.CREATE_ACCOUNT },
         )
-        AuthStep.SIGN_IN -> SignInScreen(onSignIn, onBack = { step = AuthStep.WELCOME })
+        AuthStep.SIGN_IN -> SignInScreen(
+            onSignIn, onBack = ::back,
+            onForgotPassword = { step = AuthStep.FORGOT_PASSWORD },
+        )
         AuthStep.CREATE_ACCOUNT -> CreateAccountScreen(onSignUp, onBack = { step = AuthStep.WELCOME })
+        AuthStep.FORGOT_PASSWORD -> ForgotPasswordScreen(onPasswordReset, onBack = ::back)
     }
     // From a form the system back button returns to Welcome; from Welcome it leaves the app.
-    BackHandler(enabled = step != AuthStep.WELCOME) { step = AuthStep.WELCOME }
+    BackHandler(enabled = step != AuthStep.WELCOME) { back() }
 }
 
 @Composable
@@ -183,6 +192,7 @@ fun WelcomeScreen(onSignIn: () -> Unit, onCreateAccount: () -> Unit) {
 fun SignInScreen(
     onSignIn: suspend (email: String, password: String) -> Unit,
     onBack: () -> Unit,
+    onForgotPassword: () -> Unit,
 ) {
     AuthForm(
         title = "Welcome back",
@@ -191,6 +201,7 @@ fun SignInScreen(
         confirmPassword = false,
         onSubmit = onSignIn,
         onBack = onBack,
+        onForgotPassword = onForgotPassword,
     )
 }
 
@@ -219,6 +230,7 @@ private fun AuthForm(
     confirmPassword: Boolean,
     onSubmit: suspend (email: String, password: String) -> Unit,
     onBack: () -> Unit,
+    onForgotPassword: (() -> Unit)? = null,
 ) {
     var email by rememberSaveable { mutableStateOf("") }
     // Passwords are deliberately not saveable: they shouldn't be written into saved state.
@@ -283,6 +295,9 @@ private fun AuthForm(
             keyboardActions = KeyboardActions(onDone = { submit() }),
             modifier = Modifier.fillMaxWidth(),
         )
+        onForgotPassword?.let {
+            TextButton(it, enabled = !loading) { Text("Forgot password?") }
+        }
         if (confirmPassword) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
