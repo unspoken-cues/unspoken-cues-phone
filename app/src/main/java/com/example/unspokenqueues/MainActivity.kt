@@ -1,5 +1,6 @@
 package com.example.unspokenqueues
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
@@ -27,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,15 +49,20 @@ import com.example.unspokenqueues.data.SwapRepository
 import com.example.unspokenqueues.data.swapFailureMessage
 import com.example.unspokenqueues.data.toCueStatus
 import com.example.unspokenqueues.data.toProfile
+import com.example.unspokenqueues.model.AppPhase
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.MockData
+import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
+import com.example.unspokenqueues.model.appPhase
 import com.example.unspokenqueues.model.cardLink
 import com.example.unspokenqueues.model.cardTokenFrom
+import com.example.unspokenqueues.ui.screens.AccountLoadingScreen
+import com.example.unspokenqueues.ui.screens.AuthFlow
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.ConfirmLinkSwapDialog
 import com.example.unspokenqueues.ui.screens.CreateEventScreen
@@ -64,10 +71,11 @@ import com.example.unspokenqueues.ui.screens.EditProfileScreen
 import com.example.unspokenqueues.ui.screens.EventDetailScreen
 import com.example.unspokenqueues.ui.screens.EventsScreen
 import com.example.unspokenqueues.ui.screens.ProfileScreen
+import com.example.unspokenqueues.ui.screens.ProfileSetupWizard
 import com.example.unspokenqueues.ui.screens.QrScreen
 import com.example.unspokenqueues.ui.screens.SettingsScreen
-import com.example.unspokenqueues.ui.screens.SignInScreen
 import com.example.unspokenqueues.ui.screens.SwapResultDialog
+import com.example.unspokenqueues.ui.screens.TabTutorialScreen
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -151,12 +159,28 @@ fun UnspokenCuesApp(
     val swapRepo = remember { SwapRepository() }
     val eventRepo = remember { EventRepository() }
     val avatarRepo = remember { AvatarRepository() }
-    val contentResolver = LocalContext.current.contentResolver
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
+    // Remembers on this device which accounts have finished onboarding, so on later launches they
+    // go straight in without waiting for the server, and still get in when offline.
+    val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    fun onboardedKey(uid: String) = "onboarded_$uid"
 
     var signedIn by rememberSaveable { mutableStateOf(authRepo.currentUser() != null) }
     // Kept as state for the event screens, which need it while they are on screen. Asking the
     // auth client each time would give null whenever the session is briefly re-initializing.
     var userId by rememberSaveable { mutableStateOf(authRepo.currentUserId()) }
+    // The user the session has been confirmed for. Unlike userId this is not restored when the
+    // app is recreated, so the profile is only read once the session is usable again; a read made
+    // before that would come back empty and look like a brand-new account.
+    var sessionUserId by remember { mutableStateOf<String?>(null) }
+    // Whether this account has finished onboarding; null until that has been read. See appPhase.
+    var onboardingComplete by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    // During onboarding: the profile wizard is done and the tab tutorial is what's left.
+    var profileSetupDone by rememberSaveable { mutableStateOf(false) }
+    var profileLoadFailed by remember { mutableStateOf(false) }
+    // Bumped by "Try again" to read the profile once more.
+    var profileLoadAttempt by remember { mutableIntStateOf(0) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
     var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
     var watch by rememberSaveable { mutableStateOf(WatchConnection.CONNECTED) }
@@ -185,10 +209,16 @@ fun UnspokenCuesApp(
                 is SessionStatus.Authenticated -> {
                     signedIn = true
                     userId = authRepo.currentUserId()
+                    sessionUserId = userId
                 }
                 is SessionStatus.NotAuthenticated -> {
                     signedIn = false
                     userId = null
+                    sessionUserId = null
+                    // Whoever signs in next starts from "not known yet", not from this account's answer.
+                    onboardingComplete = null
+                    profileSetupDone = false
+                    profileLoadFailed = false
                     // The next account to sign in must not land in this one's event.
                     creatingEvent = false
                     openEvent = null
@@ -198,20 +228,36 @@ fun UnspokenCuesApp(
         }
     }
 
-    // Load the profile + status from the database whenever we become signed in.
-    LaunchedEffect(signedIn) {
-        if (signedIn) {
-            val uid = authRepo.currentUserId() ?: return@LaunchedEffect
-            runCatching {
-                val row = profileRepo.loadProfile(uid)
-                if (row != null) {
-                    profile = row.toProfile()
-                    status = row.toCueStatus()
-                } else {
-                    // No row yet (e.g. older account): seed one from current local state.
-                    profileRepo.upsertProfile(uid, profile, status)
-                }
+    // Load the profile + status from the database once the session is confirmed, and with them
+    // whether this account still has onboarding ahead of it.
+    LaunchedEffect(sessionUserId, profileLoadAttempt) {
+        val uid = sessionUserId ?: return@LaunchedEffect
+        val onboardedHere = prefs.getBoolean(onboardedKey(uid), false)
+        if (onboardedHere) onboardingComplete = true
+        profileLoadFailed = false
+        try {
+            val row = profileRepo.loadProfile(uid)
+            if (row != null) {
+                profile = row.toProfile()
+                status = row.toCueStatus()
+            } else {
+                // No row yet (e.g. older account): start blank and let the profile wizard create it.
+                profile = Profile("", "", emptyList(), emptyList(), isPublic = true)
             }
+            when {
+                row?.onboardingComplete == true -> {
+                    prefs.edit().putBoolean(onboardedKey(uid), true).apply()
+                    onboardingComplete = true
+                }
+                // Finished on this device, but the server never heard (it was offline): tell it now.
+                onboardedHere -> profileRepo.markOnboardingComplete(uid)
+                else -> onboardingComplete = false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Only matters while the answer is still unknown; AccountLoadingScreen offers a retry.
+            profileLoadFailed = true
         }
     }
 
@@ -264,10 +310,19 @@ fun UnspokenCuesApp(
         }
     }
 
-    // A card link opened the app. Wait for sign-in, then ask before swapping: unlike a scan, a
-    // link can be followed by accident, and swapping shares this user's card too.
-    LaunchedEffect(openedLink, signedIn) {
-        if (openedLink != null && signedIn) {
+    val phase = appPhase(signedIn, onboardingComplete, profileSetupDone)
+
+    fun signOut() {
+        scope.launch { runCatching { authRepo.signOut() } }
+        showingSettings = false
+        tab = Tab.CUE
+    }
+
+    // A card link opened the app. Wait until the user is signed in and through onboarding (there
+    // is no card of theirs to swap before that), then ask before swapping: unlike a scan, a link
+    // can be followed by accident, and swapping shares this user's card too.
+    LaunchedEffect(openedLink, phase) {
+        if (openedLink != null && phase == AppPhase.MAIN) {
             linkToConfirm = openedLink
             onOpenedLinkHandled()
         }
@@ -303,12 +358,70 @@ fun UnspokenCuesApp(
         )
     }
 
-    if (!signedIn) {
+    if (phase == AppPhase.SIGNED_OUT) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
-                SignInScreen(
+                AuthFlow(
                     onSignIn = { email, password -> authRepo.signIn(email, password) },
                     onSignUp = { email, password -> authRepo.signUp(email, password) },
+                )
+            }
+        }
+        return
+    }
+
+    if (phase == AppPhase.LOADING) {
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                AccountLoadingScreen(
+                    failed = profileLoadFailed,
+                    onRetry = { profileLoadAttempt++ },
+                    onSignOut = ::signOut,
+                )
+            }
+        }
+        return
+    }
+
+    // Onboarding, for an account that hasn't finished it: set up the profile, then tour the tabs.
+    if (phase == AppPhase.PROFILE_SETUP) {
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                ProfileSetupWizard(
+                    initial = profile,
+                    onUploadAvatar = { uri ->
+                        val uid = authRepo.currentUserId() ?: error("Not signed in")
+                        avatarRepo.upload(contentResolver, uid, uri)
+                    },
+                    onFinish = { updated ->
+                        // Saved before moving on; if this throws the wizard reports it and stays.
+                        val uid = authRepo.currentUserId() ?: error("Not signed in")
+                        profileRepo.upsertProfile(uid, updated, status)
+                        profile = updated
+                        profileSetupDone = true
+                    },
+                )
+            }
+        }
+        return
+    }
+
+    if (phase == AppPhase.TUTORIAL) {
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                // Skipping counts as finishing: either way onboarding is over and the tabs open.
+                TabTutorialScreen(
+                    onFinish = {
+                        onboardingComplete = true
+                        profileSetupDone = false
+                        tab = Tab.CUE
+                        val uid = userId
+                        if (uid != null) {
+                            prefs.edit().putBoolean(onboardedKey(uid), true).apply()
+                            // If this doesn't reach the server, the next profile load sends it again.
+                            scope.launch { runCatching { profileRepo.markOnboardingComplete(uid) } }
+                        }
+                    },
                 )
             }
         }
@@ -351,11 +464,7 @@ fun UnspokenCuesApp(
                     onReconnect = {
                         watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
                     },
-                    onSignOut = {
-                        scope.launch { runCatching { authRepo.signOut() } }
-                        showingSettings = false
-                        tab = Tab.CUE
-                    },
+                    onSignOut = ::signOut,
                     onBack = { showingSettings = false },
                 )
             }

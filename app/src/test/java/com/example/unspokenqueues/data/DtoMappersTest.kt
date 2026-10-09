@@ -56,6 +56,43 @@ class DtoMappersTest {
         assert(encoded.contains("\"avatar_url\":\"https://x.test/a.jpg\"")) { encoded }
     }
 
+    // ---------- onboarding_complete ----------
+
+    @Test
+    fun profileRow_onboardingDefaultsToNotComplete() {
+        assertEquals(false, ProfileRow(id = "u1").onboardingComplete)
+    }
+
+    @Test
+    fun profileRow_decodesOnboardingCompleteFromSnakeCaseJson() {
+        val done = json.decodeFromString<ProfileRow>("""{"id":"u1","onboarding_complete":true}""")
+        val notDone = json.decodeFromString<ProfileRow>("""{"id":"u1","onboarding_complete":false}""")
+        assertEquals(true, done.onboardingComplete)
+        assertEquals(false, notDone.onboardingComplete)
+    }
+
+    @Test
+    fun profileRow_withoutOnboardingColumn_decodesToNotComplete() {
+        // A database that hasn't had the column added yet.
+        val row = json.decodeFromString<ProfileRow>("""{"id":"u1","display_name":"Sam"}""")
+        assertEquals(false, row.onboardingComplete)
+    }
+
+    @Test
+    fun onboardingComplete_doesNotChangeTheMappedProfile() {
+        val row = ProfileRow(id = "u1", displayName = "Sam", bio = "hi", avatarUrl = "https://x.test/a.jpg")
+        assertEquals(row.toProfile(), row.copy(onboardingComplete = true).toProfile())
+    }
+
+    @Test
+    fun profileUpsert_neverWritesOnboardingComplete() {
+        // Saving a profile must not reset the flag, so the payload may not carry the column at all.
+        val strict = Json { encodeDefaults = true }
+        val upsert = Profile("Sam", "bio", listOf("a"), listOf("b"), true).toUpsert("u1", CueStatus.GREEN)
+        val encoded = strict.encodeToString(ProfileUpsert.serializer(), upsert)
+        assert(!encoded.contains("onboarding")) { encoded }
+    }
+
     // ---------- EventRow ----------
 
     @Test

@@ -44,6 +44,13 @@ class ProfileRepository(
         }
     }
 
+    /** Records that the user has finished onboarding, so they aren't taken through it again. */
+    suspend fun markOnboardingComplete(userId: String) {
+        table().update(mapOf("onboarding_complete" to true)) {
+            filter { eq("id", userId) }
+        }
+    }
+
     private companion object {
         const val TABLE = "profiles"
     }

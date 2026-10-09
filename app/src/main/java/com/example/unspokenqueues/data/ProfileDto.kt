@@ -21,9 +21,18 @@ data class ProfileRow(
     // Stored as the enum name (GREEN/YELLOW/RED/PURPLE).
     val status: String = CueStatus.GREEN.name,
     @SerialName("avatar_url") val avatarUrl: String = "",
+    // Whether the user has finished the first-run walkthrough.
+    @SerialName("onboarding_complete") val onboardingComplete: Boolean = false,
 )
 
-/** Payload used when inserting/updating a profile. Excludes server-managed columns. */
+/**
+ * Payload used when inserting/updating a profile. Excludes server-managed columns.
+ *
+ * `onboarding_complete` is left out on purpose. This payload is sent on every profile edit, so
+ * carrying the flag would reset it each time; without it an insert takes the column's default
+ * (false) and an update leaves the stored value alone. Only
+ * [ProfileRepository.markOnboardingComplete] writes it.
+ */
 @Serializable
 data class ProfileUpsert(
     val id: String,
