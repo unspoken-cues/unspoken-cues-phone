@@ -28,6 +28,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.unspokenqueues.data.AuthRepository
+import com.example.unspokenqueues.data.isPasswordRecoveryLink
 import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ProfileRepository
@@ -63,6 +65,7 @@ import com.example.unspokenqueues.model.cardLink
 import com.example.unspokenqueues.model.cardTokenFrom
 import com.example.unspokenqueues.ui.screens.AccountLoadingScreen
 import com.example.unspokenqueues.ui.screens.AuthFlow
+import com.example.unspokenqueues.ui.screens.NewPasswordScreen
 import com.example.unspokenqueues.ui.screens.BinderScreen
 import com.example.unspokenqueues.ui.screens.ConfirmLinkSwapDialog
 import com.example.unspokenqueues.ui.screens.CreateEventScreen
@@ -126,6 +129,7 @@ class MainActivity : ComponentActivity() {
     // A card link tapped while the app is already running arrives here instead of in onCreate.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         intent.dataString?.let { openedLink = it }
     }
 }
@@ -161,6 +165,33 @@ fun UnspokenCuesApp(
     val avatarRepo = remember { AvatarRepository() }
     val context = LocalContext.current
     val contentResolver = context.contentResolver
+    var recoveringPassword by rememberSaveable { mutableStateOf(false) }
+    var recoveryReady by rememberSaveable { mutableStateOf(false) }
+    var recoveryAttempt by rememberSaveable { mutableIntStateOf(0) }
+    var recoveryError by remember { mutableStateOf<String?>(null) }
+    var returnToSignIn by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(openedLink) {
+        if (!isPasswordRecoveryLink(openedLink)) return@LaunchedEffect
+        recoveringPassword = true
+        recoveryAttempt++
+        recoveryReady = false
+        recoveryError = null
+        try {
+            authRepo.recoverPassword(openedLink!!)
+            recoveryReady = true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            recoveryError = if (e is java.io.IOException) {
+                "Couldn't check this reset link. Check your connection and request a new link."
+            } else {
+                "This reset link is invalid or has expired. Go back to sign in and request a new link."
+            }
+        } finally {
+            onOpenedLinkHandled()
+        }
+    }
     // Remembers on this device which accounts have finished onboarding, so on later launches they
     // go straight in without waiting for the server, and still get in when offline.
     val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
@@ -207,8 +238,20 @@ fun UnspokenCuesApp(
             // out would flash the sign-in screen and throw away whatever screen the user was on.
             when (s) {
                 is SessionStatus.Authenticated -> {
+                    val authenticatedUserId = authRepo.currentUserId()
+                    if (userId != authenticatedUserId) {
+                        onboardingComplete = null
+                        profileSetupDone = false
+                        profileLoadFailed = false
+                        cardToken = null
+                        collection = emptyList()
+                        creatingEvent = false
+                        openEvent = null
+                        editingProfile = false
+                        showingSettings = false
+                    }
                     signedIn = true
-                    userId = authRepo.currentUserId()
+                    userId = authenticatedUserId
                     sessionUserId = userId
                 }
                 is SessionStatus.NotAuthenticated -> {
@@ -263,7 +306,7 @@ fun UnspokenCuesApp(
 
     // Reload the binder on sign-in and each time it is opened, so a card disappears once the
     // other person has removed the swap.
-    LaunchedEffect(signedIn, tab) {
+    LaunchedEffect(signedIn, userId, tab) {
         if (!signedIn) {
             collection = emptyList()
         } else if (tab == Tab.BINDER || tab == Tab.CUE) {
@@ -274,7 +317,7 @@ fun UnspokenCuesApp(
 
     // Load this user's card token on sign-in. If that fails (offline), every tab change tries
     // again until it works.
-    LaunchedEffect(signedIn, tab) {
+    LaunchedEffect(signedIn, userId, tab) {
         if (!signedIn) {
             cardToken = null
             cardTokenFailed = false
@@ -322,7 +365,7 @@ fun UnspokenCuesApp(
     // is no card of theirs to swap before that), then ask before swapping: unlike a scan, a link
     // can be followed by accident, and swapping shares this user's card too.
     LaunchedEffect(openedLink, phase) {
-        if (openedLink != null && phase == AppPhase.MAIN) {
+        if (openedLink != null && !isPasswordRecoveryLink(openedLink) && phase == AppPhase.MAIN) {
             linkToConfirm = openedLink
             onOpenedLinkHandled()
         }
@@ -358,12 +401,44 @@ fun UnspokenCuesApp(
         )
     }
 
+    // A recovery session is authenticated, but must show password entry before onboarding/tabs.
+    if (recoveringPassword || isPasswordRecoveryLink(openedLink)) {
+        fun cancelRecovery() {
+            scope.launch {
+                if (recoveryReady) authRepo.cancelPasswordRecovery()
+                recoveryReady = false
+                recoveringPassword = false
+                returnToSignIn = true
+            }
+        }
+        Scaffold { padding ->
+            Box(Modifier.padding(padding)) {
+                key(recoveryAttempt) {
+                    NewPasswordScreen(
+                        ready = recoveryReady,
+                        processing = isPasswordRecoveryLink(openedLink),
+                        linkError = recoveryError,
+                        onUpdatePassword = { authRepo.updatePassword(it) },
+                        onCancel = ::cancelRecovery,
+                        onContinue = {
+                            recoveringPassword = false
+                            recoveryReady = false
+                        },
+                    )
+                }
+            }
+        }
+        return
+    }
+
     if (phase == AppPhase.SIGNED_OUT) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
                 AuthFlow(
                     onSignIn = { email, password -> authRepo.signIn(email, password) },
                     onSignUp = { email, password -> authRepo.signUp(email, password) },
+                    onPasswordReset = { authRepo.requestPasswordReset(it) },
+                    startAtSignIn = returnToSignIn,
                 )
             }
         }

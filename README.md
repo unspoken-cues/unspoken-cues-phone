@@ -25,3 +25,23 @@ Full product handoff lives outside this repo. Key rules:
 - Exactly four statuses, one active at a time.
 - Phone is the source-of-truth control surface; must sync reliably with the Wear OS app.
 - Final Play identity is `com.unspokencues.phone` — do not reuse `com.unspokencues.mobile` or leave a `playtest` applicationId in a release build.
+
+## Password recovery
+
+The sign-in screen includes **Forgot password?**. Supabase sends an email link that opens
+`unspokencues://password-reset` in the Android app. The app validates the recovery session
+before showing the new-password form, and saves the password through Supabase Auth.
+
+Before using this flow in a Supabase project:
+
+1. In **Authentication → URL Configuration → Redirect URLs**, allow
+   `unspokencues://password-reset` exactly.
+2. In **Authentication → Email Templates → Reset Password**, keep the recovery link using
+   `{{ .ConfirmationURL }}` so Supabase verifies the token before redirecting to the app.
+3. Ensure the project's email delivery is configured for the users who will test this flow.
+
+Test with an existing account: request a reset from sign-in, open the email on the Android
+device where the app is installed, enter matching new passwords, then sign out and sign in
+with the new password. Expired links should offer a return to sign-in to request another.
+The confirmation after requesting a link deliberately does not reveal whether an email
+belongs to an account. Automated UI tests use callbacks and do not send real emails.

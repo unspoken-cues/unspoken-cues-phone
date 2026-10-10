@@ -35,6 +35,10 @@ class AuthFlowTest {
                         if (failure != null) throw failure
                         submitted += "up:$email:$password"
                     },
+                    onPasswordReset = { email ->
+                        if (failure != null) throw failure
+                        submitted += "reset:$email"
+                    },
                 )
             }
         }
@@ -106,6 +110,53 @@ class AuthFlowTest {
     }
 
     // ---------- Create account ----------
+
+    @Test
+    fun forgotPassword_requestsReset_withoutAPassword_andReturnsToSignIn() {
+        showFlow()
+        compose.onNodeWithText("Sign in").performClick()
+        compose.onNodeWithText("Forgot password?").performClick()
+        compose.onNodeWithText("Password").assertDoesNotExist()
+        compose.onNodeWithText("Email").performTextInput(" sam@example.com ")
+        compose.onNodeWithText("Send reset link").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf("reset:sam@example.com"), submitted)
+        compose.onNodeWithText("Check your email").assertIsDisplayed()
+        compose.onNodeWithText("If an account exists", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Back to sign in").performClick()
+        compose.onNodeWithText("Welcome back").assertIsDisplayed()
+    }
+
+    @Test
+    fun forgotPassword_invalidEmail_doesNotSend() {
+        showFlow()
+        compose.onNodeWithText("Sign in").performClick()
+        compose.onNodeWithText("Forgot password?").performClick()
+        compose.onNodeWithText("Email").performTextInput("invalid")
+        compose.onNodeWithText("Send reset link").performClick()
+        compose.onNodeWithText("Enter a valid email address.").assertIsDisplayed()
+        assertEquals(emptyList<String>(), submitted)
+    }
+
+    @Test
+    fun forgotPassword_networkFailure_allowsRetry() {
+        showFlow(IOException("secret server details"))
+        compose.onNodeWithText("Sign in").performClick()
+        compose.onNodeWithText("Forgot password?").performClick()
+        compose.onNodeWithText("Email").performTextInput("sam@example.com")
+        compose.onNodeWithText("Send reset link").performClick()
+        compose.onNodeWithText("Couldn't reach the server. Check your connection and try again.").assertIsDisplayed()
+        compose.onNodeWithText("Check your email").assertDoesNotExist()
+    }
+
+    @Test
+    fun forgotPassword_systemBack_returnsToSignIn() {
+        showFlow()
+        compose.onNodeWithText("Sign in").performClick()
+        compose.onNodeWithText("Forgot password?").performClick()
+        Espresso.pressBack()
+        compose.onNodeWithText("Welcome back").assertIsDisplayed()
+    }
 
     @Test
     fun createAccount_showsEmailPasswordAndConfirm() {
