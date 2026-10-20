@@ -9,7 +9,21 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +33,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -27,8 +43,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -54,9 +71,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,11 +87,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -101,17 +126,26 @@ import com.example.unspokenqueues.model.isValidJoinCode
 import com.example.unspokenqueues.model.visibleAttendees
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
+import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Dot
+import com.example.unspokenqueues.ui.components.EventListSkeleton
 import com.example.unspokenqueues.ui.components.ScreenTitle
 import com.example.unspokenqueues.ui.components.FullScreenQr
 import com.example.unspokenqueues.ui.components.QrScanner
 import com.example.unspokenqueues.ui.components.SectionCard
 import com.example.unspokenqueues.ui.components.SwapCard
+import com.example.unspokenqueues.ui.components.SwapCardBack
 import com.example.unspokenqueues.ui.components.WatchPill
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import com.example.unspokenqueues.ui.theme.EaseOutExpo
+import com.example.unspokenqueues.ui.theme.EaseOutQuart
+import com.example.unspokenqueues.ui.theme.MotionLong
+import com.example.unspokenqueues.ui.theme.MotionMedium
+import com.example.unspokenqueues.ui.theme.MotionShort
 import java.io.File
+import kotlin.math.hypot
 
 @Composable
 private fun ScreenColumn(content: @Composable () -> Unit) {
@@ -177,7 +211,7 @@ fun WelcomeScreen(onSignIn: () -> Unit, onCreateAccount: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Text("Unspoken Cues", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
         Text(
-            "Let people know how you're doing — without saying a word.",
+            "Let people know how you're doing, without saying a word.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -367,29 +401,22 @@ fun AccountLoadingScreen(failed: Boolean, onRetry: () -> Unit, onSignOut: () -> 
 
 @Composable
 fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueStatus) -> Unit) {
-    val heroColor by animateColorAsState(status.color, label = "cue")
     ScreenColumn {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("My Cue", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             WatchPill(watch)
         }
 
-        Surface(
-            Modifier.fillMaxWidth().height(220.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = heroColor,
-        ) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.Bottom) {
-                Text("CURRENTLY", style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.8f))
-                Text(status.label, style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                Text(status.meaning, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.9f))
-            }
-        }
+        CueHero(status)
 
         Text("Change status", style = MaterialTheme.typography.titleMedium)
-        CueStatus.entries.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { cue -> CueOption(cue, cue == status, Modifier.weight(1f)) { onStatusChange(cue) } }
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            CueStatus.entries.chunked(2).forEach { row ->
+                Row(Modifier.height(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { cue ->
+                        CueOption(cue, cue == status, Modifier.weight(1f).fillMaxHeight()) { onStatusChange(cue) }
+                    }
+                }
             }
         }
         Text(
@@ -400,13 +427,85 @@ fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueSta
     }
 }
 
+/**
+ * The current cue, large. On a change the new color spreads over the old one from the bottom-left
+ * corner, under the text, while the words swap.
+ */
+@Composable
+private fun CueHero(status: CueStatus) {
+    // [under] stays painted while [over] spreads across it.
+    var under by remember { mutableStateOf(status) }
+    var over by remember { mutableStateOf(status) }
+    val spread = remember { Animatable(1f) }
+    LaunchedEffect(status) {
+        if (status == over) return@LaunchedEffect
+        under = over
+        over = status
+        spread.snapTo(0f)
+        spread.animateTo(1f, tween(MotionLong + 150, easing = EaseOutExpo))
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .drawBehind {
+                drawRect(under.color)
+                drawCircle(
+                    over.color,
+                    radius = hypot(size.width, size.height) * spread.value,
+                    center = Offset(0f, size.height),
+                )
+            }
+            .padding(24.dp),
+        contentAlignment = Alignment.BottomStart,
+    ) {
+        AnimatedContent(
+            targetState = status,
+            transitionSpec = {
+                (fadeIn(tween(MotionMedium, delayMillis = 90, easing = EaseOutQuart)) +
+                    slideInVertically(tween(MotionMedium, delayMillis = 90, easing = EaseOutQuart)) { it / 6 }) togetherWith
+                    fadeOut(tween(90))
+            },
+            contentAlignment = Alignment.BottomStart,
+            label = "cueText",
+        ) { shown ->
+            // Full-strength on-color text: alpha on a saturated fill drops below AA contrast.
+            Column {
+                Text("CURRENTLY", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = shown.onColor)
+                Text(shown.label, style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold, color = shown.onColor)
+                Text(shown.meaning, style = MaterialTheme.typography.titleMedium, color = shown.onColor)
+            }
+        }
+    }
+}
+
 @Composable
 private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val motion = tween<Float>(MotionMedium, easing = EaseOutQuart)
+    val scale by animateFloatAsState(if (selected) 1.03f else 1f, motion, label = "cueScale")
+    val fill by animateColorAsState(
+        if (selected) cue.color.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+        tween(MotionMedium, easing = EaseOutQuart),
+        label = "cueFill",
+    )
+    val edge by animateColorAsState(
+        if (selected) cue.color else MaterialTheme.colorScheme.outline,
+        tween(MotionMedium, easing = EaseOutQuart),
+        label = "cueEdge",
+    )
+    val edgeWidth by animateDpAsState(if (selected) 2.dp else 1.dp, tween(MotionMedium, easing = EaseOutQuart), label = "cueEdgeWidth")
     Surface(
-        modifier = modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick),
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(20.dp))
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
         shape = RoundedCornerShape(20.dp),
-        color = if (selected) cue.color.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) cue.color else MaterialTheme.colorScheme.outline),
+        color = fill,
+        border = BorderStroke(edgeWidth, edge),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Dot(cue.color, 22)
@@ -475,21 +574,30 @@ fun EventsScreen(
         }
 
         Text("My events", style = MaterialTheme.typography.titleMedium)
-        val loaded = events
-        when {
-            loaded == null && loadFailed -> Text(
-                "Couldn't load your events. Check your connection, then open this tab again.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-            loaded == null -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-            loaded.isEmpty() -> Text(
-                "No events yet. Host one, or join with a code from the host.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            else -> loaded.forEach { event ->
-                EventListItem(event, hosting = event.hostId == userId) { onOpen(event) }
+        // Placeholders while loading, then the list fades in over them.
+        AnimatedContent(
+            targetState = events to loadFailed,
+            transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
+            contentKey = { (loaded, failed) -> if (loaded == null) failed else "loaded" },
+            label = "events",
+        ) { (loaded, failed) ->
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                when {
+                    loaded == null && failed -> Text(
+                        "Couldn't load your events. Check your connection, then open this tab again.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    loaded == null -> EventListSkeleton()
+                    loaded.isEmpty() -> Text(
+                        "No events yet. Host one, or join with a code from the host.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    else -> loaded.forEach { event ->
+                        EventListItem(event, hosting = event.hostId == userId) { onOpen(event) }
+                    }
+                }
             }
         }
     }
@@ -767,7 +875,7 @@ fun EventDetailScreen(
                             }
                         },
                         modifier = Modifier.weight(1f).height(52.dp),
-                    ) { Text(if (copied) "Copied ✓" else "Copy code") }
+                    ) { CopyLabel(copied, "Copy code") }
                     Button({ showingQr = true }, Modifier.weight(1f).height(52.dp)) { Text("Show join QR") }
                 }
             }
@@ -790,17 +898,25 @@ fun EventDetailScreen(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        when {
-            visible == null -> if (!loadFailed) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-            visible.isEmpty() -> Text(
-                if (isHost && event.active) "Nobody has joined yet. Show the join QR or share the code." else "Nobody to show yet.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            else -> SectionCard {
-                visible.forEachIndexed { i, person ->
-                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                    AttendeeRow(person)
+        AnimatedContent(
+            targetState = visible,
+            transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
+            // Only loading → loaded fades; a refresh updates the list in place.
+            contentKey = { it == null },
+            label = "attendees",
+        ) { shown ->
+            when {
+                shown == null -> if (!loadFailed) AttendeeListSkeleton()
+                shown.isEmpty() -> Text(
+                    if (isHost && event.active) "Nobody has joined yet. Show the join QR or share the code." else "Nobody to show yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> SectionCard {
+                    shown.forEachIndexed { i, person ->
+                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        AttendeeRow(person)
+                    }
                 }
             }
         }
@@ -879,8 +995,25 @@ private fun AttendeeRow(person: Attendee) {
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
-        Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Dot(person.status.color, 12)
+        Column(Modifier.weight(1f)) {
+            Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            StatusLabel(person.status)
+        }
+    }
+}
+
+// A cue's dot with its meaning, so the status reads without telling colors apart.
+@Composable
+private fun StatusLabel(status: CueStatus) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Dot(status.color, 8)
+        Text(
+            status.meaning,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -903,7 +1036,7 @@ fun ProfileScreen(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Avatar(p.displayName, 72, p.avatarUrl)
+            Avatar(p.displayName, 72, p.avatarImage)
             Column(Modifier.weight(1f)) {
                 Text(p.displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 if (p.bio.isNotBlank()) {
@@ -930,9 +1063,46 @@ private fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((Str
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.forEach { item ->
-            if (onRemove == null) Chip(item) else Chip("$item  ✕", Modifier.clip(RoundedCornerShape(50)).clickable { onRemove(item) })
+            if (onRemove == null) Chip(item) else key(item) { RemovableChip(item, onRemove) }
         }
     }
+}
+
+// A chip that shrinks away when tapped, and only then leaves the list.
+@Composable
+private fun RemovableChip(item: String, onRemove: (String) -> Unit) {
+    val visibility = remember { MutableTransitionState(true) }
+    val remove by rememberUpdatedState(onRemove)
+    LaunchedEffect(visibility.isIdle, visibility.currentState) {
+        if (visibility.isIdle && !visibility.currentState) remove(item)
+    }
+    AnimatedVisibility(
+        visibility,
+        exit = fadeOut(tween(MotionShort)) +
+            scaleOut(tween(MotionMedium, easing = EaseOutQuart), targetScale = 0.6f) +
+            shrinkHorizontally(tween(MotionMedium, easing = EaseOutQuart)),
+    ) {
+        Chip(
+            "$item  ✕",
+            Modifier
+                .minimumInteractiveComponentSize()
+                .clip(RoundedCornerShape(50))
+                .clickable(onClickLabel = "Remove $item", enabled = visibility.targetState) { visibility.targetState = false },
+        )
+    }
+}
+
+// A copy button's label, which turns into "Copied ✓" once the copy has happened.
+@Composable
+private fun CopyLabel(copied: Boolean, label: String) {
+    AnimatedContent(
+        targetState = copied,
+        transitionSpec = {
+            (fadeIn(tween(MotionMedium, easing = EaseOutQuart)) + slideInVertically(tween(MotionMedium, easing = EaseOutQuart)) { it / 2 }) togetherWith
+                (fadeOut(tween(MotionShort)) + slideOutVertically(tween(MotionShort)) { -it / 2 })
+        },
+        label = "copied",
+    ) { done -> Text(if (done) "Copied ✓" else label) }
 }
 
 // ---------- 3b. Edit profile ----------
@@ -951,6 +1121,8 @@ fun EditProfileScreen(
     var boundaries by remember { mutableStateOf(initial.boundaries) }
     var isPublic by remember { mutableStateOf(initial.isPublic) }
     var avatarUrl by remember { mutableStateOf(initial.avatarUrl) }
+    // The local copy of the current photo, kept while the photo is unchanged.
+    val keptLocal = initial.localAvatar.takeIf { avatarUrl.isNotBlank() && avatarUrl == initial.avatarUrl }
     // A photo chosen or taken on this screen. It is only uploaded when the user taps Save.
     // Saveable because Android may recreate the activity while the camera app is in front.
     var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
@@ -965,7 +1137,7 @@ fun EditProfileScreen(
         scope.launch {
             try {
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
-                onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url))
+                onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -991,7 +1163,7 @@ fun EditProfileScreen(
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             AvatarPicker(
                 name = name,
-                image = pickedPhoto ?: avatarUrl,
+                image = pickedPhoto ?: keptLocal ?: avatarUrl,
                 enabled = !saving,
                 onPicked = { pickedPhoto = it },
                 onRemove = {
@@ -1263,22 +1435,81 @@ fun ConfirmLinkSwapDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 @Composable
 fun SwapResultDialog(result: SwapResult, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
     when (result) {
-        is SwapResult.Swapped -> {
-            val whose = result.card.name.takeIf { it.isNotBlank() }?.let { "$it's" } ?: "Their"
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("Cards swapped") },
-                text = { Text("$whose card is in your binder, and yours is in theirs.") },
-                confirmButton = { TextButton(onViewBinder) { Text("View binder") } },
-                dismissButton = { TextButton(onDismiss) { Text("Done") } },
-            )
-        }
+        is SwapResult.Swapped -> SwapReveal(result.card, onViewBinder, onDismiss)
         is SwapResult.Failed -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Couldn't swap cards") },
             text = { Text(result.message) },
             confirmButton = { TextButton(onDismiss) { Text("OK") } },
         )
+    }
+}
+
+// Dim backdrop behind the swap reveal; tinted rather than pure black.
+private val RevealScrim = Color(0xE60E0F13)
+
+/**
+ * A just-swapped card arriving: it rises from the bottom face down, turns over to show who it is,
+ * and then the ways out appear.
+ */
+@Composable
+private fun SwapReveal(card: CollectedCard, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
+    val whose = card.name.takeIf { it.isNotBlank() }?.let { "$it's" } ?: "Their"
+    val rise = remember { Animatable(1f) }
+    val turn = remember { Animatable(180f) }
+    val controls = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        rise.animateTo(0f, tween(MotionLong, easing = EaseOutExpo))
+        turn.animateTo(0f, tween(MotionLong + 200, easing = EaseOutQuart))
+        controls.animateTo(1f, tween(MotionMedium, easing = EaseOutQuart))
+    }
+    val showingBack by remember { derivedStateOf { turn.value > 90f } }
+    Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier.fillMaxSize().background(RevealScrim).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                "Cards swapped",
+                Modifier.graphicsLayer { alpha = 1f - rise.value },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+            Spacer(Modifier.height(24.dp))
+            Box(
+                Modifier.graphicsLayer {
+                    translationY = rise.value * size.height * 2
+                    rotationY = turn.value
+                    cameraDistance = 14f * density
+                },
+            ) {
+                SwapCard(card.profile, card.status, Modifier.graphicsLayer { alpha = if (showingBack) 0f else 1f })
+                if (showingBack) {
+                    // Turned again so the back doesn't read mirrored.
+                    SwapCardBack(card.status, Modifier.matchParentSize().graphicsLayer { rotationY = 180f })
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            Column(
+                Modifier.graphicsLayer {
+                    alpha = controls.value
+                    translationY = (1f - controls.value) * 12.dp.toPx()
+                },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "$whose card is in your binder, and yours is in theirs.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.White.copy(alpha = 0.9f),
+                    textAlign = TextAlign.Center,
+                )
+                Button(onViewBinder, Modifier.fillMaxWidth().height(52.dp)) { Text("View binder") }
+                TextButton(onDismiss, Modifier.fillMaxWidth()) { Text("Done", color = Color.White) }
+            }
+        }
     }
 }
 
@@ -1319,7 +1550,7 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
                         copied = true
                     },
                     modifier = Modifier.weight(1f).height(52.dp),
-                ) { Text(if (copied) "Copied ✓" else "Copy link") }
+                ) { CopyLabel(copied, "Copy link") }
                 Button(
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
@@ -1361,20 +1592,29 @@ fun BinderScreen(
     ScreenColumn {
         ScreenTitle("Binder", "Cards you've collected through S.W.A.P.")
         Surface(
-            Modifier.fillMaxWidth().height(160.dp),
+            Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = status.color.copy(alpha = 0.12f),
+            border = BorderStroke(1.dp, status.color.copy(alpha = 0.5f)),
         ) {
-            Row(Modifier.padding(20.dp)) {
-                Box(Modifier.width(6.dp).fillMaxHeightBar(status.color))
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                Modifier.padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(Modifier.border(2.dp, status.color, CircleShape).padding(3.dp)) {
+                    Avatar(profile.displayName, 56, profile.avatarImage)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("MY CARD", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Column {
-                        Text(profile.displayName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                        Text(status.meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Text(
+                        profile.displayName,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    StatusLabel(status)
                 }
             }
         }
@@ -1438,15 +1678,21 @@ private fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> U
     }
 }
 
-private fun Modifier.fillMaxHeightBar(color: Color) =
-    this.height(120.dp).background(color, RoundedCornerShape(3.dp))
-
 @Composable
 private fun CollectedTile(card: CollectedCard, modifier: Modifier, onClick: () -> Unit) {
     SectionCard(modifier.aspectRatio(0.8f).clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
-        Dot(card.status.color, 16)
+        Box(Modifier.border(2.dp, card.status.color, CircleShape).padding(2.dp)) {
+            Avatar(card.name, 36, card.profile.avatarUrl)
+        }
         Spacer(Modifier.weight(1f))
-        Text(card.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            card.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(card.status.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

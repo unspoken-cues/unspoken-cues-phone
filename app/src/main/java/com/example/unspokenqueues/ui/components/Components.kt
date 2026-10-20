@@ -1,5 +1,10 @@
 package com.example.unspokenqueues.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -17,9 +22,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +38,7 @@ import coil3.compose.AsyncImage
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.theme.CueGreen
 import com.example.unspokenqueues.ui.theme.CueYellow
+import com.example.unspokenqueues.ui.theme.rememberReduceMotion
 
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null) {
@@ -90,7 +101,13 @@ fun WatchPill(state: WatchConnection) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Dot(color, 8)
+            if (state == WatchConnection.SYNCING) {
+                // A slow pulse says "working on it" without anything flashing.
+                val pulse = rememberPulse()
+                Box(Modifier.graphicsLayer { alpha = pulse() }) { Dot(color, 8) }
+            } else {
+                Dot(color, 8)
+            }
             Text(state.label, style = MaterialTheme.typography.labelLarge)
         }
     }
@@ -134,6 +151,72 @@ fun Avatar(name: String, size: Int, image: Any? = null) {
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().clip(CircleShape),
             )
+        }
+    }
+}
+
+/**
+ * A slow 0.4 to 1 alpha pulse for things that are waiting (loading placeholders, syncing).
+ * Holds at 1 when the user has turned animations off.
+ */
+@Composable
+fun rememberPulse(): () -> Float {
+    if (rememberReduceMotion()) return { 1f }
+    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "pulseAlpha",
+    )
+    return { pulse }
+}
+
+// A grey stand-in for content that is still loading.
+@Composable
+private fun SkeletonBlock(modifier: Modifier, pulse: () -> Float, shape: Shape = RoundedCornerShape(8.dp)) {
+    Box(
+        modifier
+            .graphicsLayer { alpha = pulse() }
+            .background(MaterialTheme.colorScheme.outline, shape),
+    )
+}
+
+/** Placeholder rows in the shape of the event list, shown while it loads. */
+@Composable
+fun EventListSkeleton(rows: Int = 3) {
+    val pulse = rememberPulse()
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        repeat(rows) {
+            SectionCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SkeletonBlock(Modifier.fillMaxWidth(0.6f).height(18.dp), pulse)
+                        SkeletonBlock(Modifier.fillMaxWidth(0.85f).height(12.dp), pulse)
+                    }
+                    SkeletonBlock(Modifier.padding(start = 12.dp).width(64.dp).height(28.dp), pulse, RoundedCornerShape(50))
+                }
+            }
+        }
+    }
+}
+
+/** Placeholder rows in the shape of an event's attendee list, shown while it loads. */
+@Composable
+fun AttendeeListSkeleton(rows: Int = 3) {
+    val pulse = rememberPulse()
+    SectionCard {
+        repeat(rows) {
+            Row(
+                Modifier.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SkeletonBlock(Modifier.size(46.dp), pulse, CircleShape)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SkeletonBlock(Modifier.width(140.dp).height(14.dp), pulse)
+                    SkeletonBlock(Modifier.width(96.dp).height(10.dp), pulse)
+                }
+            }
         }
     }
 }

@@ -10,6 +10,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -79,6 +87,9 @@ import com.example.unspokenqueues.ui.screens.QrScreen
 import com.example.unspokenqueues.ui.screens.SettingsScreen
 import com.example.unspokenqueues.ui.screens.SwapResultDialog
 import com.example.unspokenqueues.ui.screens.TabTutorialScreen
+import com.example.unspokenqueues.ui.theme.EaseOutQuart
+import com.example.unspokenqueues.ui.theme.MotionMedium
+import com.example.unspokenqueues.ui.theme.MotionShort
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -503,89 +514,177 @@ fun UnspokenCuesApp(
         return
     }
 
-    if (editingProfile) {
-        BackHandler { editingProfile = false }
-        Scaffold { padding ->
-            Box(Modifier.padding(padding)) {
-                EditProfileScreen(
-                    initial = profile,
-                    email = authRepo.currentUser()?.email,
-                    onUploadAvatar = { uri ->
-                        val uid = authRepo.currentUserId() ?: error("Not signed in")
-                        avatarRepo.upload(contentResolver, uid, uri)
-                    },
-                    onSave = { updated ->
-                        profile = updated
-                        editingProfile = false
-                        val uid = authRepo.currentUserId()
-                        if (uid != null) scope.launch { runCatching { profileRepo.upsertProfile(uid, updated, status) } }
-                    },
-                    onCancel = { editingProfile = false },
-                )
-            }
-        }
-        return
-    }
-
-    // Settings is reached from the cog on the Profile screen rather than its own tab.
-    if (showingSettings) {
-        BackHandler { showingSettings = false }
-        Scaffold { padding ->
-            Box(Modifier.padding(padding)) {
-                SettingsScreen(
-                    watch = watch,
-                    themeMode = themeMode,
-                    onThemeModeChange = onThemeModeChange,
-                    onReconnect = {
-                        watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
-                    },
-                    onSignOut = ::signOut,
-                    onBack = { showingSettings = false },
-                )
-            }
-        }
-        return
-    }
-
     // Hosting an event and an event's detail are reached from the Events tab and cover it.
     val uid = userId
-    if (creatingEvent && uid != null) {
-        BackHandler { creatingEvent = false }
-        Scaffold { padding ->
-            Box(Modifier.padding(padding)) {
-                CreateEventScreen(
-                    repo = eventRepo,
-                    userId = uid,
-                    onCreated = {
-                        creatingEvent = false
-                        openEvent = it
-                    },
-                    onCancel = { creatingEvent = false },
-                )
-            }
+    val overlay = when {
+        editingProfile -> Overlay.EDIT_PROFILE
+        showingSettings -> Overlay.SETTINGS
+        creatingEvent && uid != null -> Overlay.CREATE_EVENT
+        openEvent != null && uid != null -> Overlay.EVENT_DETAIL
+        else -> Overlay.NONE
+    }
+    // The detail screen keeps showing its event while it slides away after openEvent is cleared.
+    var lastOpenEvent by remember { mutableStateOf<Event?>(null) }
+    SideEffect { openEvent?.let { lastOpenEvent = it } }
+
+    BackHandler(enabled = overlay != Overlay.NONE) {
+        when (overlay) {
+            Overlay.EDIT_PROFILE -> editingProfile = false
+            Overlay.SETTINGS -> showingSettings = false
+            Overlay.CREATE_EVENT -> creatingEvent = false
+            Overlay.EVENT_DETAIL -> openEvent = null
+            Overlay.NONE -> Unit
         }
-        return
     }
 
-    val event = openEvent
-    if (event != null && uid != null) {
-        BackHandler { openEvent = null }
-        Scaffold { padding ->
-            Box(Modifier.padding(padding)) {
-                EventDetailScreen(
-                    repo = eventRepo,
-                    userId = uid,
-                    status = status,
-                    event = event,
-                    onEventChange = { openEvent = it },
-                    onRemoved = { openEvent = null },
-                    onBack = { openEvent = null },
-                )
+    AnimatedContent(
+        targetState = overlay,
+        transitionSpec = {
+            // Going deeper slides in from the right; going back reverses it.
+            val forward = targetState.depth > initialState.depth
+            val direction = if (forward) 1 else -1
+            (slideInHorizontally(tween(MotionMedium, easing = EaseOutQuart)) { direction * it / 4 } +
+                fadeIn(tween(MotionMedium, easing = EaseOutQuart))) togetherWith
+                (slideOutHorizontally(tween(MotionMedium, easing = EaseOutQuart)) { -direction * it / 8 } +
+                    fadeOut(tween(MotionShort)))
+        },
+        label = "overlay",
+    ) { shown ->
+        when (shown) {
+            Overlay.EDIT_PROFILE -> Scaffold { padding ->
+                Box(Modifier.padding(padding)) {
+                    EditProfileScreen(
+                        initial = profile,
+                        email = authRepo.currentUser()?.email,
+                        onUploadAvatar = { uri ->
+                            val id = authRepo.currentUserId() ?: error("Not signed in")
+                            avatarRepo.upload(contentResolver, id, uri)
+                        },
+                        onSave = { updated ->
+                            profile = updated
+                            editingProfile = false
+                            val id = authRepo.currentUserId()
+                            if (id != null) scope.launch { runCatching { profileRepo.upsertProfile(id, updated, status) } }
+                        },
+                        onCancel = { editingProfile = false },
+                    )
+                }
+            }
+            // Settings is reached from the cog on the Profile screen rather than its own tab.
+            Overlay.SETTINGS -> Scaffold { padding ->
+                Box(Modifier.padding(padding)) {
+                    SettingsScreen(
+                        watch = watch,
+                        themeMode = themeMode,
+                        onThemeModeChange = onThemeModeChange,
+                        onReconnect = {
+                            watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
+                        },
+                        onSignOut = ::signOut,
+                        onBack = { showingSettings = false },
+                    )
+                }
+            }
+            Overlay.CREATE_EVENT -> Scaffold { padding ->
+                Box(Modifier.padding(padding)) {
+                    if (uid != null) {
+                        CreateEventScreen(
+                            repo = eventRepo,
+                            userId = uid,
+                            onCreated = {
+                                creatingEvent = false
+                                openEvent = it
+                            },
+                            onCancel = { creatingEvent = false },
+                        )
+                    }
+                }
+            }
+            Overlay.EVENT_DETAIL -> Scaffold { padding ->
+                Box(Modifier.padding(padding)) {
+                    val event = openEvent ?: lastOpenEvent
+                    if (event != null && uid != null) {
+                        EventDetailScreen(
+                            repo = eventRepo,
+                            userId = uid,
+                            status = status,
+                            event = event,
+                            onEventChange = { openEvent = it },
+                            onRemoved = { openEvent = null },
+                            onBack = { openEvent = null },
+                        )
+                    }
+                }
+            }
+            Overlay.NONE -> TabsScaffold(
+                tab = tab,
+                onTabChange = { tab = it },
+            ) { shownTab ->
+                when (shownTab) {
+                    Tab.CUE -> CueScreen(status, watch) { newStatus ->
+                        status = newStatus
+                        val id = authRepo.currentUserId()
+                        if (id != null) scope.launch { runCatching { profileRepo.updateStatus(id, newStatus) } }
+                    }
+                    Tab.EVENTS -> if (uid != null) {
+                        EventsScreen(
+                            repo = eventRepo,
+                            userId = uid,
+                            onHost = { creatingEvent = true },
+                            onOpen = { openEvent = it },
+                        )
+                    }
+                    Tab.QR -> QrScreen(
+                        status = status,
+                        profile = profile,
+                        cardLink = cardToken?.let(::cardLink),
+                        cardLinkFailed = cardTokenFailed,
+                        onCollect = ::collectCard,
+                    )
+                    Tab.BINDER -> BinderScreen(
+                        status = status,
+                        profile = profile,
+                        collection = collection,
+                        onRemove = { card ->
+                            val id = authRepo.currentUserId()
+                            if (id != null) {
+                                val before = collection
+                                collection = collection - card
+                                scope.launch {
+                                    // Put the card back if the server didn't delete the swap.
+                                    runCatching { swapRepo.removeSwap(id, card.userId) }.onFailure { collection = before }
+                                }
+                            }
+                        },
+                    )
+                    Tab.PROFILE -> ProfileScreen(
+                        profile = profile,
+                        onEdit = { editingProfile = true },
+                        onVisibilityChange = { isPublic ->
+                            profile = profile.copy(isPublic = isPublic)
+                            val id = authRepo.currentUserId()
+                            if (id != null) scope.launch { runCatching { profileRepo.updateVisibility(id, isPublic) } }
+                        },
+                        onOpenSettings = { showingSettings = true },
+                    )
+                }
             }
         }
-        return
     }
+}
 
+// What covers the tabs, if anything. [depth] decides which way a change slides.
+private enum class Overlay(val depth: Int) {
+    NONE(0),
+    EDIT_PROFILE(1),
+    SETTINGS(1),
+    CREATE_EVENT(1),
+    EVENT_DETAIL(2),
+}
+
+// The tab bar and the current tab, which fades in when the tab changes.
+@Composable
+private fun TabsScaffold(tab: Tab, onTabChange: (Tab) -> Unit, content: @Composable (Tab) -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -594,7 +693,7 @@ fun UnspokenCuesApp(
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = t == tab,
-                        onClick = { tab = t },
+                        onClick = { onTabChange(t) },
                         icon = { Icon(painterResource(t.icon), contentDescription = t.label) },
                         label = { Text(t.label) },
                     )
@@ -602,55 +701,15 @@ fun UnspokenCuesApp(
             }
         },
     ) { padding ->
-        Box(Modifier.padding(padding)) {
-            when (tab) {
-                Tab.CUE -> CueScreen(status, watch) { newStatus ->
-                    status = newStatus
-                    val uid = authRepo.currentUserId()
-                    if (uid != null) scope.launch { runCatching { profileRepo.updateStatus(uid, newStatus) } }
-                }
-                Tab.EVENTS -> if (uid != null) {
-                    EventsScreen(
-                        repo = eventRepo,
-                        userId = uid,
-                        onHost = { creatingEvent = true },
-                        onOpen = { openEvent = it },
-                    )
-                }
-                Tab.QR -> QrScreen(
-                    status = status,
-                    profile = profile,
-                    cardLink = cardToken?.let(::cardLink),
-                    cardLinkFailed = cardTokenFailed,
-                    onCollect = ::collectCard,
-                )
-                Tab.BINDER -> BinderScreen(
-                    status = status,
-                    profile = profile,
-                    collection = collection,
-                    onRemove = { card ->
-                        val uid = authRepo.currentUserId()
-                        if (uid != null) {
-                            val before = collection
-                            collection = collection - card
-                            scope.launch {
-                                // Put the card back if the server didn't delete the swap.
-                                runCatching { swapRepo.removeSwap(uid, card.userId) }.onFailure { collection = before }
-                            }
-                        }
-                    },
-                )
-                Tab.PROFILE -> ProfileScreen(
-                    profile = profile,
-                    onEdit = { editingProfile = true },
-                    onVisibilityChange = { isPublic ->
-                        profile = profile.copy(isPublic = isPublic)
-                        val uid = authRepo.currentUserId()
-                        if (uid != null) scope.launch { runCatching { profileRepo.updateVisibility(uid, isPublic) } }
-                    },
-                    onOpenSettings = { showingSettings = true },
-                )
-            }
+        AnimatedContent(
+            targetState = tab,
+            modifier = Modifier.padding(padding),
+            transitionSpec = {
+                fadeIn(tween(MotionMedium, delayMillis = 60, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort - 60))
+            },
+            label = "tab",
+        ) { shownTab ->
+            Box(Modifier.fillMaxSize()) { content(shownTab) }
         }
     }
 }
