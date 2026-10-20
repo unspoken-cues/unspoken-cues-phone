@@ -77,6 +77,8 @@ fun ProfileSetupWizard(
     var avatarUrl by rememberSaveable { mutableStateOf(initial.avatarUrl) }
     // A photo chosen or taken here. It is only uploaded when the user taps Finish.
     var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
+    // The local photo behind avatarUrl once it is uploaded, so the app can show it straight away.
+    var uploadedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
     // Text typed into the current list step's field but not added to the list yet.
     var entry by rememberSaveable { mutableStateOf("") }
     var finishing by remember { mutableStateOf(false) }
@@ -106,9 +108,10 @@ fun ProfileSetupWizard(
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
                 // Keep the uploaded URL, so trying again after a failed save doesn't upload twice.
                 avatarUrl = url
+                pickedPhoto?.let { uploadedPhoto = it }
                 pickedPhoto = null
                 failure = "Couldn't save your profile. Check your connection and try again."
-                onFinish(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url))
+                onFinish(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url, uploadedPhoto.takeIf { url.isNotBlank() }))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

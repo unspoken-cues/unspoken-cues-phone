@@ -94,9 +94,9 @@ fun SwapCard(
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,
                         )
-                        if (profile.avatarUrl.isNotBlank()) {
+                        profile.avatarImage?.let { image ->
                             AsyncImage(
-                                model = profile.avatarUrl,
+                                model = image,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize().clip(CircleShape),
@@ -112,7 +112,8 @@ fun SwapCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Text(status.meaning, style = MaterialTheme.typography.bodyMedium, color = status.color)
+                        // White, not the cue color: purple and red on the dark card fall below AA.
+                        Text(status.meaning, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.85f))
                     }
                 }
 
@@ -150,6 +151,34 @@ fun SwapCard(
     }
 }
 
+/** The back of a S.W.A.P. card, seen while a newly swapped card turns over. Size it to the front. */
+@Composable
+fun SwapCardBack(status: CueStatus, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(28.dp), color = CardInk) {
+        Box(
+            Modifier.background(
+                Brush.radialGradient(
+                    listOf(status.color.copy(alpha = 0.45f), Color.Transparent),
+                    radius = 700f,
+                ),
+            ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CueStatus.entries.forEach { Dot(it.color, 12) }
+                }
+                Text(
+                    "S.W.A.P.",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.9f),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun StatusPill(status: CueStatus) {
     Row(
@@ -167,7 +196,7 @@ private fun CardList(title: String, items: List<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title.uppercase(), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.55f))
         if (items.isEmpty()) {
-            Text("—", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+            Text("None shared", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
         }
         items.take(2).forEach {
             Text(

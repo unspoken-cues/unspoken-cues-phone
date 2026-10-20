@@ -23,3 +23,7 @@ val CueGreen = Color(0xFF2E9E5B)
 val CueYellow = Color(0xFFE8B517)
 val CueRed = Color(0xFFD94335)
 val CuePurple = Color(0xFF7B4FC9)
+
+// Text laid on a cue color: dark ink on green and yellow, near-white on red and purple.
+val CueOnLight = Color(0xFF15171C)
+val CueOnDark = Color(0xFFFCFBF8)

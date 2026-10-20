@@ -2,16 +2,19 @@ package com.example.unspokenqueues.model
 
 import androidx.compose.ui.graphics.Color
 import com.example.unspokenqueues.ui.theme.CueGreen
+import com.example.unspokenqueues.ui.theme.CueOnDark
+import com.example.unspokenqueues.ui.theme.CueOnLight
 import com.example.unspokenqueues.ui.theme.CuePurple
 import com.example.unspokenqueues.ui.theme.CueRed
 import com.example.unspokenqueues.ui.theme.CueYellow
 import kotlin.random.Random
 
-enum class CueStatus(val label: String, val meaning: String, val color: Color) {
-    GREEN("Green", "Open to connect", CueGreen),
-    YELLOW("Yellow", "Proceed with care", CueYellow),
-    RED("Red", "Please give me space", CueRed),
-    PURPLE("Purple", "Maybe open to connect", CuePurple),
+// [onColor] is the text color that meets AA contrast when laid directly on [color].
+enum class CueStatus(val label: String, val meaning: String, val color: Color, val onColor: Color) {
+    GREEN("Green", "Open to connect", CueGreen, CueOnLight),
+    YELLOW("Yellow", "Proceed with care", CueYellow, CueOnLight),
+    RED("Red", "Please give me space", CueRed, CueOnDark),
+    PURPLE("Purple", "Maybe open to connect", CuePurple, CueOnDark),
 }
 
 enum class WatchConnection(val label: String) {
@@ -34,7 +37,13 @@ data class Profile(
     val isPublic: Boolean,
     // Public URL of the profile photo; blank means none (initials are shown instead).
     val avatarUrl: String = "",
-)
+    // The on-device photo that was just uploaded to [avatarUrl]. Shown in its place so the new
+    // photo appears at once instead of waiting for the download. Never saved to the server.
+    val localAvatar: Any? = null,
+) {
+    /** What to show as the profile photo: the local copy if there is one, else the URL, else null. */
+    val avatarImage: Any? get() = localAvatar ?: avatarUrl.takeIf { it.isNotBlank() }
+}
 
 // Someone who has joined an event. userId is their account id.
 data class Attendee(val userId: String, val profile: Profile, val status: CueStatus) {
