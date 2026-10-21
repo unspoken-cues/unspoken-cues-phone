@@ -548,6 +548,14 @@ create policy "Users can delete own event covers"
   using (bucket_id = 'event-covers' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- ---------------------------------------------------------------------------
+-- 15. Card image: the picture a user puts on their S.W.A.P. card. Public URL of
+--     an image in the avatars bucket (avatars/<user id>/card.jpg), blank for none.
+--     Swap partners read it through the profile row, like avatar_url.
+-- ---------------------------------------------------------------------------
+alter table public.profiles
+  add column if not exists card_image_url text not null default '';
+
+-- ---------------------------------------------------------------------------
 -- Manual test notes
 -- ---------------------------------------------------------------------------
 -- 1. Paste this whole file into the SQL editor and run it. Run it a second time:

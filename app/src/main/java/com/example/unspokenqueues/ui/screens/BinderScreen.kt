@@ -144,7 +144,7 @@ private fun MyCardStrip(status: CueStatus, profile: Profile) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Halo(status, glow = true) { Avatar(profile.displayName, 56, profile.avatarImage) }
+                Halo(status, glow = true) { Avatar(profile.displayName, 56, profile.cardPicture) }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         "MY CARD",
@@ -229,7 +229,7 @@ private fun BinderCardTile(card: CollectedCard, modifier: Modifier, onClick: () 
                     drawCircle(Color.Black.copy(alpha = 0.07f), radius = size.height * 0.6f, center = Offset(size.width, 0f))
                 }
                 Box(Modifier.background(Color.White, CircleShape).padding(3.dp)) {
-                    Avatar(card.name, 56, card.profile.avatarUrl)
+                    Avatar(card.name, 64, card.profile.cardPicture)
                 }
             }
             Column(

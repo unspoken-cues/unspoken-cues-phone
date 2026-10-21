@@ -37,6 +37,17 @@ class ProfileRepository(
         }
     }
 
+    /**
+     * Updates only the card image: the public URL of the picture on the user's S.W.A.P. card, or
+     * blank to remove it. Kept out of [upsertProfile] so saving a profile never touches it, and a
+     * database without the column only fails here.
+     */
+    suspend fun updateCardImage(userId: String, url: String) {
+        table().update(mapOf("card_image_url" to url)) {
+            filter { eq("id", userId) }
+        }
+    }
+
     /** Updates only the public-visibility flag. */
     suspend fun updateVisibility(userId: String, isPublic: Boolean) {
         table().update(mapOf("is_public" to isPublic)) {

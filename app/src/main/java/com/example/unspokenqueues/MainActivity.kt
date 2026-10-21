@@ -585,15 +585,28 @@ fun UnspokenCuesApp(
                     EditProfileScreen(
                         initial = profile,
                         email = authRepo.currentUser()?.email,
+                        status = status,
                         onUploadAvatar = { uri ->
                             val id = authRepo.currentUserId() ?: error("Not signed in")
                             avatarRepo.upload(contentResolver, id, uri)
                         },
+                        onUploadCardImage = { uri ->
+                            val id = authRepo.currentUserId() ?: error("Not signed in")
+                            avatarRepo.uploadCardImage(contentResolver, id, uri)
+                        },
                         onSave = { updated ->
+                            val cardImageChanged = updated.cardImageUrl != profile.cardImageUrl
                             profile = updated
                             editingProfile = false
                             val id = authRepo.currentUserId()
-                            if (id != null) scope.launch { runCatching { profileRepo.upsertProfile(id, updated, status) } }
+                            if (id != null) {
+                                scope.launch {
+                                    runCatching { profileRepo.upsertProfile(id, updated, status) }
+                                    // Its own call: the card image has its own column, and a failure here
+                                    // must not undo the rest of the save.
+                                    if (cardImageChanged) runCatching { profileRepo.updateCardImage(id, updated.cardImageUrl) }
+                                }
+                            }
                         },
                         onCancel = { editingProfile = false },
                     )

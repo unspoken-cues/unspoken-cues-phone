@@ -16,6 +16,16 @@ const val AVATAR_MAX_DIMENSION = 512
  */
 fun avatarPath(userId: String): String = "$userId/avatar.jpg"
 
+/** Longest side, in pixels, of an uploaded card image. */
+const val CARD_IMAGE_MAX_DIMENSION = 1024
+
+/** Object path of a user's card image. Same bucket and same own-folder rule as the avatar. */
+fun cardImagePath(userId: String): String = "$userId/card.jpg"
+
+/** Public URL of a user's card image; [version] changes on every upload so caches let go of the old one. */
+fun cardImagePublicUrl(supabaseUrl: String, userId: String, version: Long): String =
+    "${supabaseUrl.trim().trimEnd('/')}/storage/v1/object/public/$AVATAR_BUCKET/${cardImagePath(userId)}?v=$version"
+
 /**
  * Public URL of a user's avatar. [version] changes on every upload so image caches don't keep
  * showing the previous photo, which lives at the same path.

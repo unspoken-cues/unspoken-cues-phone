@@ -41,9 +41,20 @@ data class Profile(
     // The on-device photo that was just uploaded to [avatarUrl]. Shown in its place so the new
     // photo appears at once instead of waiting for the download. Never saved to the server.
     val localAvatar: Any? = null,
+    // Public URL of the picture the person put on their S.W.A.P. card; blank means none, and the
+    // card falls back to the profile photo.
+    val cardImageUrl: String = "",
+    // The on-device copy of [cardImageUrl], shown at once after an upload. Never saved.
+    val localCardImage: Any? = null,
 ) {
     /** What to show as the profile photo: the local copy if there is one, else the URL, else null. */
     val avatarImage: Any? get() = localAvatar ?: avatarUrl.takeIf { it.isNotBlank() }
+
+    /** The picture the person chose for their card: the local copy if there is one, else the URL, else null. */
+    val cardImage: Any? get() = localCardImage ?: cardImageUrl.takeIf { it.isNotBlank() }
+
+    /** What the card and the binder show as the person's picture: their card image, else their profile photo. */
+    val cardPicture: Any? get() = cardImage ?: avatarImage
 }
 
 // Someone who has joined an event. userId is their account id.

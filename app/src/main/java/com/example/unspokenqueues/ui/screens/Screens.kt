@@ -625,7 +625,9 @@ internal fun CopyLabel(copied: Boolean, label: String) {
 fun EditProfileScreen(
     initial: Profile,
     email: String?,
+    status: CueStatus,
     onUploadAvatar: suspend (Uri) -> String,
+    onUploadCardImage: suspend (Uri) -> String,
     onSave: (Profile) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -640,6 +642,10 @@ fun EditProfileScreen(
     // A photo chosen or taken on this screen. It is only uploaded when the user taps Save.
     // Saveable because Android may recreate the activity while the camera app is in front.
     var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
+    // The same three for the picture on the S.W.A.P. card.
+    var cardImageUrl by remember { mutableStateOf(initial.cardImageUrl) }
+    val keptLocalCard = initial.localCardImage.takeIf { cardImageUrl.isNotBlank() && cardImageUrl == initial.cardImageUrl }
+    var pickedCard by rememberSaveable { mutableStateOf<Uri?>(null) }
     var saving by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -651,11 +657,17 @@ fun EditProfileScreen(
         scope.launch {
             try {
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
-                onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal))
+                val cardUrl = pickedCard?.let { onUploadCardImage(it) } ?: cardImageUrl
+                onSave(
+                    Profile(
+                        name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal,
+                        cardImageUrl = cardUrl, localCardImage = pickedCard ?: keptLocalCard,
+                    ),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                photoError = "Couldn't upload your photo. Check your connection and try again."
+                photoError = "Couldn't upload your pictures. Check your connection and try again."
             } finally {
                 saving = false
             }
@@ -688,6 +700,31 @@ fun EditProfileScreen(
             )
             photoError?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        SectionCard(title = "Card image") {
+            Text(
+                "Shown large on your S.W.A.P. card in other people's binders, ringed in your cue color. " +
+                    "Without one, your profile photo is used.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                AvatarPicker(
+                    name = name,
+                    image = pickedCard ?: keptLocalCard ?: cardImageUrl,
+                    enabled = !saving,
+                    onPicked = { pickedCard = it },
+                    onRemove = {
+                        pickedCard = null
+                        cardImageUrl = ""
+                    },
+                    onError = { photoError = it },
+                    size = 112,
+                    noun = "card image",
+                    halo = status,
+                )
             }
         }
 
@@ -737,6 +774,11 @@ internal fun AvatarPicker(
     onPicked: (Uri) -> Unit,
     onRemove: () -> Unit,
     onError: (String?) -> Unit,
+    size: Int = 88,
+    // What the picture is called in the menu: "Add photo", "Change card image", ...
+    noun: String = "photo",
+    // When set, the picture is ringed in this cue (with a soft glow), as it will be on the card.
+    halo: CueStatus? = null,
 ) {
     val hasPhoto = image != null && image != ""
     // Saveable because Android may recreate the activity while the camera app is in front.
@@ -764,9 +806,9 @@ internal fun AvatarPicker(
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Avatar(name, 88, image)
+        if (halo != null) Halo(halo, glow = true) { Avatar(name, size, image) } else Avatar(name, size, image)
         Box {
-            TextButton({ menuOpen = true }, enabled = enabled) { Text(if (hasPhoto) "Change photo" else "Add photo") }
+            TextButton({ menuOpen = true }, enabled = enabled) { Text(if (hasPhoto) "Change $noun" else "Add $noun") }
             DropdownMenu(menuOpen, { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text("Choose from gallery") },
@@ -789,7 +831,7 @@ internal fun AvatarPicker(
                 )
                 if (hasPhoto) {
                     DropdownMenuItem(
-                        text = { Text("Remove photo") },
+                        text = { Text("Remove $noun") },
                         onClick = {
                             menuOpen = false
                             onRemove()
