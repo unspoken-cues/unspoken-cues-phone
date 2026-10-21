@@ -17,13 +17,17 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.unspokenqueues.data.EventCoverRepository
+import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,10 +43,21 @@ private class FakeEventRepository(
     val left = mutableListOf<Pair<String, String>>()
     val deleted = mutableListOf<String>()
 
-    override suspend fun createEvent(hostId: String, name: String, details: String): Event =
-        Event("new", hostId, name.trim(), details.trim(), "NEW234", true).also { created += it }
+    override suspend fun createEvent(hostId: String, draft: EventDraft): Event =
+        Event(
+            "new", hostId, draft.name.trim(), draft.details.trim(), "NEW234", true,
+            startsAt = draft.startsAt, endsAt = draft.endsAt, hostName = draft.hostName,
+        ).also { created += it }
 
     override suspend fun myEvents(userId: String): List<Event> = events
+
+    // Everyone in these tests who does not host an event answers "going", as joining by code does.
+    override suspend fun myRsvps(userId: String): Map<String, Rsvp> =
+        events.filter { it.hostId != userId }.associate { it.id to Rsvp.GOING }
+
+    override suspend fun discoverEvents(): List<Event> = emptyList()
+
+    override suspend fun event(eventId: String): Event? = events.firstOrNull { it.id == eventId }
 
     override suspend fun eventAttendees(eventId: String): List<Attendee> = attendees
 
@@ -135,8 +150,8 @@ class EventsScreenTest {
         showList(FakeEventRepository())
 
         compose.onNodeWithText("Host event").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithText("Join event").assertIsDisplayed().assertIsEnabled()
-        compose.onNodeWithText("No events yet", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Join with code").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Nothing coming up", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -144,11 +159,13 @@ class EventsScreenTest {
         showList(FakeEventRepository(listOf(mixer, picnic, oldParty)))
 
         compose.onNodeWithText("Design Mixer").assertIsDisplayed()
-        compose.onNodeWithText("Friday 7 PM").assertIsDisplayed()
         compose.onNodeWithText("Hosting").assertIsDisplayed()
-        compose.onNodeWithText("Joined").assertIsDisplayed()
-        compose.onNodeWithText("Ended").assertIsDisplayed()
-        compose.onNodeWithText("No events yet", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Going").assertIsDisplayed()
+        // The ended one has moved to the Past tab.
+        compose.onNodeWithText("Launch Party").assertDoesNotExist()
+        compose.onNodeWithText("Past").performClick()
+        compose.onNodeWithText("Launch Party").assertIsDisplayed()
+        compose.onNodeWithText("Nothing coming up", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -168,7 +185,7 @@ class EventsScreenTest {
     fun typedCode_joinsTheEvent_andOpensIt() {
         showList(FakeEventRepository(listOf(picnic)), userId = "newcomer")
 
-        compose.onNodeWithText("Join event").performClick()
+        compose.onNodeWithText("Join with code").performClick()
         compose.onNodeWithText("Scan QR code").assertIsDisplayed()
         compose.onNodeWithText("Join").assertIsNotEnabled()
         compose.onNodeWithText("Event code").performTextInput("pcnc34")
@@ -182,7 +199,7 @@ class EventsScreenTest {
     fun codeNoEventHas_saysSo_andStaysOnTheDialog() {
         showList(FakeEventRepository(listOf(picnic)), userId = "newcomer")
 
-        compose.onNodeWithText("Join event").performClick()
+        compose.onNodeWithText("Join with code").performClick()
         compose.onNodeWithText("Event code").performTextInput("NOPE22")
         compose.onNodeWithText("Join").performClick()
 
@@ -195,7 +212,7 @@ class EventsScreenTest {
     fun endedEvent_cannotBeJoined() {
         showList(FakeEventRepository(listOf(oldParty)), userId = "newcomer")
 
-        compose.onNodeWithText("Join event").performClick()
+        compose.onNodeWithText("Join with code").performClick()
         compose.onNodeWithText("Event code").performTextInput("PARTY5")
         compose.onNodeWithText("Join").performClick()
 
@@ -362,17 +379,24 @@ class EventsScreenTest {
         val repo = FakeEventRepository()
         compose.setContent {
             UnspokenQueuesTheme {
-                CreateEventScreen(repo, "host", onCreated = { opened += it }, onCancel = { clicks += "cancel" })
+                CreateEventScreen(
+                    repo, EventCoverRepository(), "host", "Hosty McHost",
+                    onCreated = { opened += it }, onCancel = { clicks += "cancel" },
+                )
             }
         }
 
         compose.onNodeWithText("Create").assertIsNotEnabled()
         compose.onNodeWithText("Event name").performTextInput("Board Games")
-        compose.onNodeWithText("Details").performTextInput("Sunday 2 PM")
+        compose.onNodeWithText("About").performTextInput("Sunday 2 PM")
         compose.onNodeWithText("Create").assertIsEnabled().performClick()
         compose.waitForIdle()
 
-        assertEquals(listOf(Event("new", "host", "Board Games", "Sunday 2 PM", "NEW234", true)), repo.created)
+        assertEquals(listOf("Board Games"), repo.created.map { it.name })
+        assertEquals(listOf("Sunday 2 PM"), repo.created.map { it.details })
+        assertEquals(listOf("Hosty McHost"), repo.created.map { it.hostName })
+        // A new event always has a start and an end, and the end is after the start.
+        assertTrue(repo.created.single().let { it.startsAt != null && it.endsAt != null && it.endsAt!! > it.startsAt!! })
         assertEquals(repo.created, opened)
     }
 }

@@ -7,6 +7,7 @@ import com.example.unspokenqueues.ui.theme.CueOnLight
 import com.example.unspokenqueues.ui.theme.CuePurple
 import com.example.unspokenqueues.ui.theme.CueRed
 import com.example.unspokenqueues.ui.theme.CueYellow
+import java.time.Instant
 import kotlin.random.Random
 
 // [onColor] is the text color that meets AA contrast when laid directly on [color].
@@ -40,9 +41,20 @@ data class Profile(
     // The on-device photo that was just uploaded to [avatarUrl]. Shown in its place so the new
     // photo appears at once instead of waiting for the download. Never saved to the server.
     val localAvatar: Any? = null,
+    // Public URL of the picture the person put on their S.W.A.P. card; blank means none, and the
+    // card falls back to the profile photo.
+    val cardImageUrl: String = "",
+    // The on-device copy of [cardImageUrl], shown at once after an upload. Never saved.
+    val localCardImage: Any? = null,
 ) {
     /** What to show as the profile photo: the local copy if there is one, else the URL, else null. */
     val avatarImage: Any? get() = localAvatar ?: avatarUrl.takeIf { it.isNotBlank() }
+
+    /** The picture the person chose for their card: the local copy if there is one, else the URL, else null. */
+    val cardImage: Any? get() = localCardImage ?: cardImageUrl.takeIf { it.isNotBlank() }
+
+    /** What the card and the binder show as the person's picture: their card image, else their profile photo. */
+    val cardPicture: Any? get() = cardImage ?: avatarImage
 }
 
 // Someone who has joined an event. userId is their account id.
@@ -50,7 +62,9 @@ data class Attendee(val userId: String, val profile: Profile, val status: CueSta
     val name get() = profile.displayName
 }
 
-// An event hosted by one user; others join it with the join code.
+// An event hosted by one user; others join it with the join code, or RSVP from the Discover feed
+// when it is public. Everything after [active] has a default so an event made before event pages
+// existed (no time, place, cover or tags) still reads as an event.
 data class Event(
     val id: String,
     val hostId: String,
@@ -58,7 +72,25 @@ data class Event(
     val details: String,
     val joinCode: String,
     val active: Boolean,
+    val startsAt: Instant? = null,
+    val endsAt: Instant? = null,
+    val location: String = "",
+    val coverUrl: String = "",
+    val tags: List<String> = emptyList(),
+    val isPublic: Boolean = false,
+    val hostName: String = "",
+    val goingCount: Int = 0,
 )
+
+/** How someone has answered an event. Joining with the host's code counts as [GOING]. */
+enum class Rsvp(val wire: String, val label: String) {
+    GOING("going", "Going"),
+    MAYBE("maybe", "Maybe");
+
+    companion object {
+        fun fromWire(value: String?): Rsvp? = entries.firstOrNull { it.wire == value }
+    }
+}
 
 // Statuses an attendee is willing to show other attendees. Red and purple stay private to the host.
 private val statusesVisibleToAttendees = setOf(CueStatus.GREEN, CueStatus.YELLOW)

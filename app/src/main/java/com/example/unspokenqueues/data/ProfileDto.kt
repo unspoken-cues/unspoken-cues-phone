@@ -21,6 +21,9 @@ data class ProfileRow(
     // Stored as the enum name (GREEN/YELLOW/RED/PURPLE).
     val status: String = CueStatus.GREEN.name,
     @SerialName("avatar_url") val avatarUrl: String = "",
+    // The picture on the user's S.W.A.P. card. Read here so swap partners see it; written only by
+    // [ProfileRepository.updateCardImage], never by the profile upsert.
+    @SerialName("card_image_url") val cardImageUrl: String = "",
     // Whether the user has finished the first-run walkthrough.
     @SerialName("onboarding_complete") val onboardingComplete: Boolean = false,
 )
@@ -54,6 +57,7 @@ fun ProfileRow.toProfile(): Profile = Profile(
     boundaries = boundaries,
     isPublic = isPublic,
     avatarUrl = avatarUrl,
+    cardImageUrl = cardImageUrl,
 )
 
 /** Parse the stored status string back into the enum, defaulting to GREEN on bad data. */

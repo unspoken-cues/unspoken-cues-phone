@@ -1,17 +1,11 @@
 package com.example.unspokenqueues.data
 
 import android.content.ContentResolver
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
-import android.media.ExifInterface
 import android.net.Uri
 import com.example.unspokenqueues.BuildConfig
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import java.io.IOException
 
 /**
  * Uploads profile photos to the public `avatars` Storage bucket.
@@ -29,49 +23,20 @@ class AvatarRepository(
      * its public URL, ready to store in `profiles.avatar_url`.
      */
     suspend fun upload(resolver: ContentResolver, userId: String, uri: Uri): String {
-        val jpeg = withContext(Dispatchers.IO) { compressToJpeg(resolver, uri) }
+        val jpeg = withContext(Dispatchers.IO) { compressToJpeg(resolver, uri, AVATAR_MAX_DIMENSION, JPEG_QUALITY) }
         storage.from(AVATAR_BUCKET).upload(avatarPath(userId), jpeg) { upsert = true }
         return avatarPublicUrl(BuildConfig.SUPABASE_URL, userId, System.currentTimeMillis())
     }
 
-    /** Decodes the image, fixes its rotation, scales it down and encodes it as JPEG. */
-    private fun compressToJpeg(resolver: ContentResolver, uri: Uri): ByteArray {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("Couldn't read image $uri")
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, AVATAR_MAX_DIMENSION)
-        }
-        val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-            ?: throw IOException("Couldn't decode image $uri")
-
-        val (width, height) = scaledSize(decoded.width, decoded.height, AVATAR_MAX_DIMENSION)
-        // Camera photos are often stored sideways with the real orientation in EXIF.
-        val matrix = Matrix().apply {
-            postScale(width.toFloat() / decoded.width, height.toFloat() / decoded.height)
-            postRotate(rotationDegrees(resolver, uri))
-        }
-        val result = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-
-        return ByteArrayOutputStream().use { out ->
-            result.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-            out.toByteArray()
-        }
-    }
-
-    private fun rotationDegrees(resolver: ContentResolver, uri: Uri): Float {
-        val orientation = runCatching {
-            resolver.openInputStream(uri)?.use {
-                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-            }
-        }.getOrNull()
-        return when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> 0f
-        }
+    /**
+     * Uploads the image at [uri] as the user's S.W.A.P. card image and returns its public URL,
+     * ready to hand to [ProfileRepository.updateCardImage]. It lives beside the avatar in the same
+     * bucket and is overwritten on every upload.
+     */
+    suspend fun uploadCardImage(resolver: ContentResolver, userId: String, uri: Uri): String {
+        val jpeg = withContext(Dispatchers.IO) { compressToJpeg(resolver, uri, CARD_IMAGE_MAX_DIMENSION, JPEG_QUALITY) }
+        storage.from(AVATAR_BUCKET).upload(cardImagePath(userId), jpeg) { upsert = true }
+        return cardImagePublicUrl(BuildConfig.SUPABASE_URL, userId, System.currentTimeMillis())
     }
 
     private companion object {

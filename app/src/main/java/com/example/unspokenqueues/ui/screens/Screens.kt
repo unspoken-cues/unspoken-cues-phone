@@ -65,7 +65,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.example.unspokenqueues.ui.components.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -128,6 +128,7 @@ import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Dot
+import com.example.unspokenqueues.ui.components.Halo
 import com.example.unspokenqueues.ui.components.EventListSkeleton
 import com.example.unspokenqueues.ui.components.ScreenTitle
 import com.example.unspokenqueues.ui.components.FullScreenQr
@@ -148,7 +149,7 @@ import java.io.File
 import kotlin.math.hypot
 
 @Composable
-private fun ScreenColumn(content: @Composable () -> Unit) {
+internal fun ScreenColumn(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
@@ -515,496 +516,9 @@ private fun CueOption(cue: CueStatus, selected: Boolean, modifier: Modifier, onC
     }
 }
 
-// ---------- 2. Events ----------
-
-/**
- * The events the user hosts or has joined, plus the two ways into a new one: host it, or join
- * with the host's code (typed or scanned). [onOpen] receives an event the user tapped or just
- * joined.
- */
-@Composable
-fun EventsScreen(
-    repo: EventRepository,
-    userId: String,
-    onHost: () -> Unit,
-    onOpen: (Event) -> Unit,
-) {
-    // Null until the first load answers.
-    var events by remember { mutableStateOf<List<Event>?>(null) }
-    var loadFailed by remember { mutableStateOf(false) }
-    var joinOpen by rememberSaveable { mutableStateOf(false) }
-    var scanning by rememberSaveable { mutableStateOf(false) }
-    var code by rememberSaveable { mutableStateOf("") }
-    var joining by remember { mutableStateOf(false) }
-    var joinError by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-
-    LaunchedEffect(userId) {
-        try {
-            events = repo.myEvents(userId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            loadFailed = true
-        }
-    }
-
-    fun join(text: String) {
-        if (joining) return
-        joinError = null
-        joining = true
-        scope.launch {
-            try {
-                onOpen(repo.joinByCode(text))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                joinError = joinFailureMessage((e as? PostgrestRestException)?.code)
-            } finally {
-                joining = false
-            }
-        }
-    }
-
-    ScreenColumn {
-        ScreenTitle("Events", "Host an event, or join one with its code.")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onHost, Modifier.weight(1f).height(52.dp)) { Text("Host event") }
-            OutlinedButton({ joinOpen = true }, Modifier.weight(1f).height(52.dp)) { Text("Join event") }
-        }
-
-        Text("My events", style = MaterialTheme.typography.titleMedium)
-        // Placeholders while loading, then the list fades in over them.
-        AnimatedContent(
-            targetState = events to loadFailed,
-            transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
-            contentKey = { (loaded, failed) -> if (loaded == null) failed else "loaded" },
-            label = "events",
-        ) { (loaded, failed) ->
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                when {
-                    loaded == null && failed -> Text(
-                        "Couldn't load your events. Check your connection, then open this tab again.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    loaded == null -> EventListSkeleton()
-                    loaded.isEmpty() -> Text(
-                        "No events yet. Host one, or join with a code from the host.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    else -> loaded.forEach { event ->
-                        EventListItem(event, hosting = event.hostId == userId) { onOpen(event) }
-                    }
-                }
-            }
-        }
-    }
-
-    // Hidden while the scanner is up so the two dialogs don't stack.
-    if (joinOpen && !scanning) {
-        JoinEventDialog(
-            code = code,
-            onCodeChange = {
-                code = it.trim().uppercase().take(JOIN_CODE_MAX_LENGTH)
-                joinError = null
-            },
-            joining = joining,
-            error = joinError,
-            onJoin = { join(code) },
-            onScan = { scanning = true },
-            onDismiss = {
-                joinOpen = false
-                code = ""
-                joinError = null
-            },
-        )
-    }
-    if (scanning) {
-        QrScanner(
-            onCode = { scanned ->
-                scanning = false
-                // The camera reads any QR code, e.g. someone's card instead of the event's.
-                if (isValidJoinCode(scanned)) {
-                    code = scanned.trim().uppercase()
-                    join(scanned)
-                } else {
-                    joinError = "That QR code isn't an event code."
-                }
-            },
-            onDismiss = { scanning = false },
-            hint = "Point the camera at the event's QR code",
-        )
-    }
-}
-
-@Composable
-private fun EventListItem(event: Event, hosting: Boolean, onClick: () -> Unit) {
-    SectionCard(Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(event.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                if (event.details.isNotBlank()) {
-                    Text(
-                        event.details,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Chip(
-                when {
-                    !event.active -> "Ended"
-                    hosting -> "Hosting"
-                    else -> "Joined"
-                },
-            )
-        }
-    }
-}
-
-// The way into someone else's event: type the host's code, or scan the QR code they are showing.
-@Composable
-private fun JoinEventDialog(
-    code: String,
-    onCodeChange: (String) -> Unit,
-    joining: Boolean,
-    error: String?,
-    onJoin: () -> Unit,
-    onScan: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val canJoin = isValidJoinCode(code) && !joining
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Join an event") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Enter the code from the host, or scan the QR code they're showing.")
-                OutlinedTextField(
-                    code, onCodeChange, label = { Text("Event code") }, singleLine = true,
-                    enabled = !joining,
-                    isError = error != null,
-                    supportingText = if (error != null) { { Text(error) } } else null,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Characters,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { if (canJoin) onJoin() }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedButton(onScan, Modifier.fillMaxWidth(), enabled = !joining) { Text("Scan QR code") }
-            }
-        },
-        confirmButton = { TextButton(onJoin, enabled = canJoin) { Text(if (joining) "Joining…" else "Join") } },
-        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
-    )
-}
-
-// ---------- 2b. Host an event ----------
-
-private const val EVENT_NAME_MAX_LENGTH = 60
-private const val EVENT_DETAILS_MAX_LENGTH = 200
-
-@Composable
-fun CreateEventScreen(
-    repo: EventRepository,
-    userId: String,
-    onCreated: (Event) -> Unit,
-    onCancel: () -> Unit,
-) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var details by rememberSaveable { mutableStateOf("") }
-    var creating by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-
-    fun create() {
-        if (creating) return
-        creating = true
-        error = null
-        scope.launch {
-            try {
-                onCreated(repo.createEvent(userId, name, details))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                error = "Couldn't create the event. Check your connection and try again."
-            } finally {
-                creating = false
-            }
-        }
-    }
-
-    ScreenColumn {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onCancel) { Text("Cancel") }
-            Spacer(Modifier.weight(1f))
-            Text("Host an event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            TextButton(
-                onClick = ::create,
-                enabled = name.isNotBlank() && !creating,
-            ) { Text(if (creating) "Creating…" else "Create") }
-        }
-
-        SectionCard(title = "Event") {
-            OutlinedTextField(
-                name, { if (it.length <= EVENT_NAME_MAX_LENGTH) name = it }, label = { Text("Event name") },
-                singleLine = true, enabled = !creating, modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                details, { if (it.length <= EVENT_DETAILS_MAX_LENGTH) details = it }, label = { Text("Details") },
-                placeholder = { Text("e.g. Friday 7 PM, Room 204") },
-                supportingText = { Text("${details.length}/$EVENT_DETAILS_MAX_LENGTH") },
-                minLines = 2, maxLines = 4, enabled = !creating, modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        error?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        }
-        Text(
-            "You'll get a code and a QR code for people to join with. As the host you see every attendee's status.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-// ---------- 2c. Event detail ----------
-
-/**
- * One event: its attendees, and for the host the join QR and the way to end it. Anyone can take
- * the event off their list: an attendee leaves it, the host deletes it for everyone. [status] is
- * the viewer's own cue, which colours the join QR's frame. [onEventChange] receives the event
- * once the host has ended it; [onRemoved] is called once the viewer has left or deleted it.
- */
-@Composable
-fun EventDetailScreen(
-    repo: EventRepository,
-    userId: String,
-    status: CueStatus,
-    event: Event,
-    onEventChange: (Event) -> Unit,
-    onRemoved: () -> Unit,
-    onBack: () -> Unit,
-) {
-    val isHost = event.hostId == userId
-    // Null until the first load answers.
-    var attendees by remember { mutableStateOf<List<Attendee>?>(null) }
-    var loadFailed by remember { mutableStateOf(false) }
-    // Bumped to load the attendee list again.
-    var reload by remember { mutableIntStateOf(0) }
-    var showingQr by remember { mutableStateOf(false) }
-    var copied by remember { mutableStateOf(false) }
-    var confirmingEnd by remember { mutableStateOf(false) }
-    var confirmingRemove by remember { mutableStateOf(false) }
-    // True while ending, leaving or deleting is in flight; only one runs at a time.
-    var working by remember { mutableStateOf(false) }
-    var actionError by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    // Compose's clipboard rather than the system service, so a test can swap in a fake one.
-    val clipboard = LocalClipboard.current
-
-    LaunchedEffect(event.id, reload) {
-        try {
-            attendees = repo.eventAttendees(event.id)
-            loadFailed = false
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            loadFailed = true
-        }
-    }
-
-    fun perform(failure: String, action: suspend () -> Unit) {
-        if (working) return
-        working = true
-        actionError = null
-        scope.launch {
-            try {
-                action()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                actionError = failure
-            } finally {
-                working = false
-            }
-        }
-    }
-
-    fun end() = perform("Couldn't end the event. Check your connection and try again.") {
-        repo.endEvent(event.id)
-        onEventChange(event.copy(active = false))
-    }
-
-    fun remove() = perform(
-        if (isHost) "Couldn't delete the event. Check your connection and try again."
-        else "Couldn't leave the event. Check your connection and try again.",
-    ) {
-        if (isHost) repo.deleteEvent(event.id) else repo.leaveEvent(event.id, userId)
-        onRemoved()
-    }
-
-    ScreenColumn {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            TextButton(onBack, Modifier.align(Alignment.CenterStart)) { Text("Back") }
-            Text("Event", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        }
-        ScreenTitle(event.name, event.details.takeIf { it.isNotBlank() })
-
-        if (!event.active) {
-            Text(
-                "This event has ended. Nobody else can join.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else if (isHost) {
-            SectionCard(title = "Join code") {
-                Text(event.joinCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Event join code", event.joinCode)))
-                                copied = true
-                            }
-                        },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                    ) { CopyLabel(copied, "Copy code") }
-                    Button({ showingQr = true }, Modifier.weight(1f).height(52.dp)) { Text("Show join QR") }
-                }
-            }
-        }
-
-        // The rule lives in visibleAttendees: the host sees everyone, others only green and yellow.
-        val visible = attendees?.let { visibleAttendees(userId, event.hostId, it) }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (visible == null) "Attendees" else "Attendees · ${visible.size}",
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            TextButton({ reload++ }) { Text("Refresh") }
-        }
-        if (loadFailed) {
-            Text(
-                "Couldn't load attendees. Check your connection, then refresh.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        AnimatedContent(
-            targetState = visible,
-            transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
-            // Only loading → loaded fades; a refresh updates the list in place.
-            contentKey = { it == null },
-            label = "attendees",
-        ) { shown ->
-            when {
-                shown == null -> if (!loadFailed) AttendeeListSkeleton()
-                shown.isEmpty() -> Text(
-                    if (isHost && event.active) "Nobody has joined yet. Show the join QR or share the code." else "Nobody to show yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                else -> SectionCard {
-                    shown.forEachIndexed { i, person ->
-                        if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        AttendeeRow(person)
-                    }
-                }
-            }
-        }
-        if (!isHost) {
-            Text(
-                "You see attendees who are green or yellow. The host sees everyone's status.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        actionError?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        }
-        if (isHost && event.active) {
-            OutlinedButton({ confirmingEnd = true }, Modifier.fillMaxWidth().height(52.dp), enabled = !working) {
-                Text("End event")
-            }
-        }
-        TextButton({ confirmingRemove = true }, Modifier.fillMaxWidth(), enabled = !working) {
-            Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error)
-        }
-    }
-
-    if (showingQr) {
-        FullScreenQr(event.joinCode, event.name, status) {
-            showingQr = false
-            // Whoever just scanned the code should be on the list when the host looks back.
-            reload++
-        }
-    }
-    if (confirmingEnd) {
-        AlertDialog(
-            onDismissRequest = { confirmingEnd = false },
-            title = { Text("End ${event.name}?") },
-            text = { Text("Nobody else will be able to join. People who already joined can still open the event.") },
-            confirmButton = {
-                TextButton({
-                    confirmingEnd = false
-                    end()
-                }) { Text("End event") }
-            },
-            dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
-        )
-    }
-    if (confirmingRemove) {
-        AlertDialog(
-            onDismissRequest = { confirmingRemove = false },
-            title = { Text(if (isHost) "Delete ${event.name}?" else "Leave ${event.name}?") },
-            text = {
-                Text(
-                    if (isHost) {
-                        "The event is removed for you and for everyone who joined. This can't be undone."
-                    } else {
-                        "The event leaves your list and you come off its attendee list. " +
-                            "You can join again with the code while the event is still running."
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton({
-                    confirmingRemove = false
-                    remove()
-                }) { Text(if (isHost) "Delete event" else "Leave event", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton({ confirmingRemove = false }) { Text("Cancel") } },
-        )
-    }
-}
-
-@Composable
-private fun AttendeeRow(person: Attendee) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
-        Column(Modifier.weight(1f)) {
-            Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            StatusLabel(person.status)
-        }
-    }
-}
-
 // A cue's dot with its meaning, so the status reads without telling colors apart.
 @Composable
-private fun StatusLabel(status: CueStatus) {
+internal fun StatusLabel(status: CueStatus) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Dot(status.color, 8)
         Text(
@@ -1056,7 +570,7 @@ fun ProfileScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((String) -> Unit)? = null) {
+internal fun ChipsOrEmpty(items: List<String>, emptyText: String, onRemove: ((String) -> Unit)? = null) {
     if (items.isEmpty()) {
         Text(emptyText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
@@ -1094,7 +608,7 @@ private fun RemovableChip(item: String, onRemove: (String) -> Unit) {
 
 // A copy button's label, which turns into "Copied ✓" once the copy has happened.
 @Composable
-private fun CopyLabel(copied: Boolean, label: String) {
+internal fun CopyLabel(copied: Boolean, label: String) {
     AnimatedContent(
         targetState = copied,
         transitionSpec = {
@@ -1111,7 +625,9 @@ private fun CopyLabel(copied: Boolean, label: String) {
 fun EditProfileScreen(
     initial: Profile,
     email: String?,
+    status: CueStatus,
     onUploadAvatar: suspend (Uri) -> String,
+    onUploadCardImage: suspend (Uri) -> String,
     onSave: (Profile) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -1126,6 +642,10 @@ fun EditProfileScreen(
     // A photo chosen or taken on this screen. It is only uploaded when the user taps Save.
     // Saveable because Android may recreate the activity while the camera app is in front.
     var pickedPhoto by rememberSaveable { mutableStateOf<Uri?>(null) }
+    // The same three for the picture on the S.W.A.P. card.
+    var cardImageUrl by remember { mutableStateOf(initial.cardImageUrl) }
+    val keptLocalCard = initial.localCardImage.takeIf { cardImageUrl.isNotBlank() && cardImageUrl == initial.cardImageUrl }
+    var pickedCard by rememberSaveable { mutableStateOf<Uri?>(null) }
     var saving by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -1137,11 +657,17 @@ fun EditProfileScreen(
         scope.launch {
             try {
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
-                onSave(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal))
+                val cardUrl = pickedCard?.let { onUploadCardImage(it) } ?: cardImageUrl
+                onSave(
+                    Profile(
+                        name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal,
+                        cardImageUrl = cardUrl, localCardImage = pickedCard ?: keptLocalCard,
+                    ),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                photoError = "Couldn't upload your photo. Check your connection and try again."
+                photoError = "Couldn't upload your pictures. Check your connection and try again."
             } finally {
                 saving = false
             }
@@ -1174,6 +700,31 @@ fun EditProfileScreen(
             )
             photoError?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        SectionCard(title = "Card image") {
+            Text(
+                "Shown large on your S.W.A.P. card in other people's binders, ringed in your cue color. " +
+                    "Without one, your profile photo is used.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                AvatarPicker(
+                    name = name,
+                    image = pickedCard ?: keptLocalCard ?: cardImageUrl,
+                    enabled = !saving,
+                    onPicked = { pickedCard = it },
+                    onRemove = {
+                        pickedCard = null
+                        cardImageUrl = ""
+                    },
+                    onError = { photoError = it },
+                    size = 112,
+                    noun = "card image",
+                    halo = status,
+                )
             }
         }
 
@@ -1223,6 +774,11 @@ internal fun AvatarPicker(
     onPicked: (Uri) -> Unit,
     onRemove: () -> Unit,
     onError: (String?) -> Unit,
+    size: Int = 88,
+    // What the picture is called in the menu: "Add photo", "Change card image", ...
+    noun: String = "photo",
+    // When set, the picture is ringed in this cue (with a soft glow), as it will be on the card.
+    halo: CueStatus? = null,
 ) {
     val hasPhoto = image != null && image != ""
     // Saveable because Android may recreate the activity while the camera app is in front.
@@ -1250,9 +806,9 @@ internal fun AvatarPicker(
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Avatar(name, 88, image)
+        if (halo != null) Halo(halo, glow = true) { Avatar(name, size, image) } else Avatar(name, size, image)
         Box {
-            TextButton({ menuOpen = true }, enabled = enabled) { Text(if (hasPhoto) "Change photo" else "Add photo") }
+            TextButton({ menuOpen = true }, enabled = enabled) { Text(if (hasPhoto) "Change $noun" else "Add $noun") }
             DropdownMenu(menuOpen, { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text("Choose from gallery") },
@@ -1275,7 +831,7 @@ internal fun AvatarPicker(
                 )
                 if (hasPhoto) {
                     DropdownMenuItem(
-                        text = { Text("Remove photo") },
+                        text = { Text("Remove $noun") },
                         onClick = {
                             menuOpen = false
                             onRemove()
@@ -1572,73 +1128,9 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
 
 // ---------- 5. S.W.A.P. / Binder ----------
 
-@Composable
-fun BinderScreen(
-    status: CueStatus,
-    profile: Profile,
-    collection: List<CollectedCard>,
-    onRemove: (CollectedCard) -> Unit,
-) {
-    var opened by remember { mutableStateOf<CollectedCard?>(null) }
-    opened?.let { card ->
-        PersonDetail(
-            card.profile, card.status,
-            onRemove = {
-                opened = null
-                onRemove(card)
-            },
-        ) { opened = null }
-    }
-    ScreenColumn {
-        ScreenTitle("Binder", "Cards you've collected through S.W.A.P.")
-        Surface(
-            Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = status.color.copy(alpha = 0.12f),
-            border = BorderStroke(1.dp, status.color.copy(alpha = 0.5f)),
-        ) {
-            Row(
-                Modifier.padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Box(Modifier.border(2.dp, status.color, CircleShape).padding(3.dp)) {
-                    Avatar(profile.displayName, 56, profile.avatarImage)
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("MY CARD", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        profile.displayName,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    StatusLabel(status)
-                }
-            }
-        }
-
-        Text("Collection · ${collection.size}", style = MaterialTheme.typography.titleMedium)
-        if (collection.isEmpty()) {
-            Text(
-                "No cards yet. Swap with someone to add their card here.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        collection.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { card -> CollectedTile(card, Modifier.weight(1f)) { opened = card } }
-                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
-    }
-}
-
 // Full-screen view of someone else's card (collected or at an event) with all their preferences and boundaries.
 @Composable
-private fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> Unit)? = null, onClose: () -> Unit) {
+internal fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> Unit)? = null, onClose: () -> Unit) {
     var confirmingRemove by remember { mutableStateOf(false) }
     if (confirmingRemove && onRemove != null) {
         AlertDialog(
@@ -1675,24 +1167,6 @@ private fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> U
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun CollectedTile(card: CollectedCard, modifier: Modifier, onClick: () -> Unit) {
-    SectionCard(modifier.aspectRatio(0.8f).clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
-        Box(Modifier.border(2.dp, card.status.color, CircleShape).padding(2.dp)) {
-            Avatar(card.name, 36, card.profile.avatarUrl)
-        }
-        Spacer(Modifier.weight(1f))
-        Text(
-            card.name,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(card.status.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

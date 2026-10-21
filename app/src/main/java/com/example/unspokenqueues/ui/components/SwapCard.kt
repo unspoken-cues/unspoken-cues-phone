@@ -83,24 +83,29 @@ fun SwapCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Box(
-                        Modifier.size(56.dp).border(2.dp, status.color, CircleShape).padding(4.dp)
-                            .background(Color.White.copy(alpha = 0.12f), CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            profile.displayName.trim().take(1).uppercase().ifEmpty { "?" },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                        )
-                        profile.avatarImage?.let { image ->
-                            AsyncImage(
-                                model = image,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    // A picture the person chose for their card is shown big and glowing; their
+                    // profile photo stands in at the smaller size. Either way it sits in a ring of their cue.
+                    val chosen = profile.cardImage != null
+                    Halo(status, glow = chosen, gap = 4.dp) {
+                        Box(
+                            Modifier.size(if (chosen) 88.dp else 56.dp)
+                                .background(Color.White.copy(alpha = 0.12f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                profile.displayName.trim().take(1).uppercase().ifEmpty { "?" },
+                                style = if (chosen) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
                             )
+                            profile.cardPicture?.let { image ->
+                                AsyncImage(
+                                    model = image,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                )
+                            }
                         }
                     }
                     Column(Modifier.weight(1f)) {
