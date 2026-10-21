@@ -2,6 +2,7 @@ package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.generateJoinCode
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
@@ -10,6 +11,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.time.Instant
 
 /** Payload for creating an event. The id, active flag and timestamps are set by the server. */
 @Serializable
@@ -18,6 +20,34 @@ data class EventInsert(
     val name: String,
     val details: String,
     @SerialName("join_code") val joinCode: String,
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null,
+    val location: String = "",
+    @SerialName("cover_url") val coverUrl: String = "",
+    val tags: List<String> = emptyList(),
+    @SerialName("is_public") val isPublic: Boolean = false,
+    @SerialName("host_name") val hostName: String = "",
+)
+
+/** Payload for setting one's RSVP: the row is created or its answer replaced. */
+@Serializable
+data class EventMemberUpsert(
+    @SerialName("event_id") val eventId: String,
+    @SerialName("user_id") val userId: String,
+    val rsvp: String,
+)
+
+/** Everything a host fills in when making an event. Tags are expected already normalised. */
+data class EventDraft(
+    val name: String,
+    val details: String = "",
+    val startsAt: Instant? = null,
+    val endsAt: Instant? = null,
+    val location: String = "",
+    val coverUrl: String = "",
+    val tags: List<String> = emptyList(),
+    val isPublic: Boolean = false,
+    val hostName: String = "",
 )
 
 /**
@@ -42,23 +72,41 @@ open class EventRepository(
 ) {
     private val postgrest by lazy { (client ?: SupabaseClientProvider.client).postgrest }
 
-    /** Creates an event hosted by [hostId] with a freshly generated join code. */
-    open suspend fun createEvent(hostId: String, name: String, details: String): Event {
+    /** Creates an event hosted by [hostId] with a freshly generated join code and no time or place. */
+    open suspend fun createEvent(hostId: String, name: String, details: String): Event =
+        createEvent(hostId, EventDraft(name, details))
+
+    /** Creates an event hosted by [hostId] from [draft], with a freshly generated join code. */
+    open suspend fun createEvent(hostId: String, draft: EventDraft): Event {
         // Join codes are random, so two events can collide; the unique constraint rejects the
         // insert and we try again with a new code.
         repeat(CODE_ATTEMPTS - 1) {
             try {
-                return insertEvent(hostId, name, details)
+                return insertEvent(hostId, draft)
             } catch (e: PostgrestRestException) {
                 if (e.code != UNIQUE_VIOLATION) throw e
             }
         }
-        return insertEvent(hostId, name, details)
+        return insertEvent(hostId, draft)
     }
 
-    private suspend fun insertEvent(hostId: String, name: String, details: String): Event =
+    private suspend fun insertEvent(hostId: String, draft: EventDraft): Event =
         postgrest.from(EVENTS)
-            .insert(EventInsert(hostId, name.trim(), details.trim(), generateJoinCode())) { select() }
+            .insert(
+                EventInsert(
+                    hostId = hostId,
+                    name = draft.name.trim(),
+                    details = draft.details.trim(),
+                    joinCode = generateJoinCode(),
+                    startsAt = draft.startsAt?.toString(),
+                    endsAt = draft.endsAt?.toString(),
+                    location = draft.location.trim(),
+                    coverUrl = draft.coverUrl,
+                    tags = draft.tags,
+                    isPublic = draft.isPublic,
+                    hostName = draft.hostName.trim(),
+                ),
+            ) { select() }
             .decodeSingle<EventRow>()
             .toEvent()
 
@@ -138,12 +186,51 @@ open class EventRepository(
         check(removed.isNotEmpty()) { "No event $eventId to delete" }
     }
 
+    /** The signed-in user's RSVP for each event they host or have joined, by event id. */
+    open suspend fun myRsvps(userId: String): Map<String, Rsvp> =
+        postgrest.from(MEMBERS)
+            .select { filter { eq("user_id", userId) } }
+            .decodeList<EventMemberRow>()
+            .toRsvps()
+
+    /**
+     * Public events that haven't been ended, soonest first. Row Level Security lets every
+     * signed-in user read them; the caller drops ones that are already over.
+     */
+    open suspend fun discoverEvents(): List<Event> =
+        postgrest.from(EVENTS)
+            .select {
+                filter {
+                    eq("is_public", true)
+                    eq("active", true)
+                }
+                order("starts_at", Order.ASCENDING)
+                limit(DISCOVER_LIMIT.toLong())
+            }
+            .decodeList<EventRow>()
+            .map { it.toEvent() }
+
+    /** Sets the signed-in user's answer to an event, joining it if they hadn't. */
+    open suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) {
+        postgrest.from(MEMBERS).upsert(EventMemberUpsert(eventId, userId, answer.wire)) {
+            onConflict = "event_id,user_id"
+        }
+    }
+
+    /** One event read fresh, e.g. to show its new going count after an RSVP; null if it can't be read. */
+    open suspend fun event(eventId: String): Event? =
+        postgrest.from(EVENTS)
+            .select { filter { eq("id", eventId) } }
+            .decodeList<EventRow>()
+            .firstOrNull()?.toEvent()
+
     companion object {
         private const val EVENTS = "events"
         private const val MEMBERS = "event_members"
         private const val PROFILES = "profiles"
         private const val JOIN_RPC = "join_event_by_code"
         private const val CODE_ATTEMPTS = 5
+        private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.
         private const val UNIQUE_VIOLATION = "23505"
 

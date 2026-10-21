@@ -1,5 +1,7 @@
 package com.example.unspokenqueues
 
+import com.example.unspokenqueues.ui.theme.cueAmbience
+import androidx.compose.material3.NavigationBarItemDefaults
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -53,6 +55,7 @@ import androidx.compose.ui.window.Dialog
 import com.example.unspokenqueues.data.AuthRepository
 import com.example.unspokenqueues.data.isPasswordRecoveryLink
 import com.example.unspokenqueues.data.AvatarRepository
+import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ProfileRepository
 import com.example.unspokenqueues.data.SwapRepository
@@ -95,6 +98,7 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import java.time.Instant
 
 class MainActivity : ComponentActivity() {
     // A card link that opened the app and hasn't been acted on yet.
@@ -155,9 +159,33 @@ enum class Tab(val label: String, @DrawableRes val icon: Int) {
 
 // Keeps the open event across rotation and process restore; an Event can't go in a Bundle as is.
 private val EventSaver = listSaver<Event?, Any>(
-    save = { e -> if (e == null) emptyList() else listOf(e.id, e.hostId, e.name, e.details, e.joinCode, e.active) },
+    save = { e ->
+        if (e == null) {
+            emptyList()
+        } else {
+            listOf(
+                e.id, e.hostId, e.name, e.details, e.joinCode, e.active,
+                e.startsAt?.toEpochMilli() ?: -1L, e.endsAt?.toEpochMilli() ?: -1L,
+                e.location, e.coverUrl, e.tags.joinToString(","), e.isPublic, e.hostName, e.goingCount,
+            )
+        }
+    },
     restore = { v ->
-        if (v.isEmpty()) null else Event(v[0] as String, v[1] as String, v[2] as String, v[3] as String, v[4] as String, v[5] as Boolean)
+        if (v.isEmpty()) {
+            null
+        } else {
+            Event(
+                v[0] as String, v[1] as String, v[2] as String, v[3] as String, v[4] as String, v[5] as Boolean,
+                startsAt = (v[6] as Long).takeIf { it >= 0 }?.let(Instant::ofEpochMilli),
+                endsAt = (v[7] as Long).takeIf { it >= 0 }?.let(Instant::ofEpochMilli),
+                location = v[8] as String,
+                coverUrl = v[9] as String,
+                tags = (v[10] as String).split(",").filter { it.isNotEmpty() },
+                isPublic = v[11] as Boolean,
+                hostName = v[12] as String,
+                goingCount = v[13] as Int,
+            )
+        }
     },
 )
 
@@ -173,6 +201,7 @@ fun UnspokenCuesApp(
     val profileRepo = remember { ProfileRepository() }
     val swapRepo = remember { SwapRepository() }
     val eventRepo = remember { EventRepository() }
+    val eventCoverRepo = remember { EventCoverRepository() }
     val avatarRepo = remember { AvatarRepository() }
     val context = LocalContext.current
     val contentResolver = context.contentResolver
@@ -590,7 +619,9 @@ fun UnspokenCuesApp(
                     if (uid != null) {
                         CreateEventScreen(
                             repo = eventRepo,
+                            coverRepo = eventCoverRepo,
                             userId = uid,
+                            hostName = profile.displayName,
                             onCreated = {
                                 creatingEvent = false
                                 openEvent = it
@@ -618,6 +649,7 @@ fun UnspokenCuesApp(
             }
             Overlay.NONE -> TabsScaffold(
                 tab = tab,
+                status = status,
                 onTabChange = { tab = it },
             ) { shownTab ->
                 when (shownTab) {
@@ -684,7 +716,7 @@ private enum class Overlay(val depth: Int) {
 
 // The tab bar and the current tab, which fades in when the tab changes.
 @Composable
-private fun TabsScaffold(tab: Tab, onTabChange: (Tab) -> Unit, content: @Composable (Tab) -> Unit) {
+private fun TabsScaffold(tab: Tab, status: CueStatus, onTabChange: (Tab) -> Unit, content: @Composable (Tab) -> Unit) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
@@ -696,6 +728,14 @@ private fun TabsScaffold(tab: Tab, onTabChange: (Tab) -> Unit, content: @Composa
                         onClick = { onTabChange(t) },
                         icon = { Icon(painterResource(t.icon), contentDescription = t.label) },
                         label = { Text(t.label) },
+                        // Ink pill under the chosen tab: the one place the bar is dark.
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
             }
@@ -703,7 +743,7 @@ private fun TabsScaffold(tab: Tab, onTabChange: (Tab) -> Unit, content: @Composa
     ) { padding ->
         AnimatedContent(
             targetState = tab,
-            modifier = Modifier.padding(padding),
+            modifier = Modifier.padding(padding).cueAmbience(status.color),
             transitionSpec = {
                 fadeIn(tween(MotionMedium, delayMillis = 60, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort - 60))
             },

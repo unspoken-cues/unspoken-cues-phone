@@ -53,7 +53,7 @@ import com.example.unspokenqueues.ui.theme.rememberReduceMotion
 @Composable
 fun ScreenTitle(title: String, subtitle: String? = null) {
     Column(Modifier.padding(bottom = 20.dp)) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         if (subtitle != null) {
             Text(
                 subtitle,

@@ -447,6 +447,107 @@ alter table public.profiles
   add column if not exists onboarding_complete boolean not null default false;
 
 -- ---------------------------------------------------------------------------
+-- 14. Event pages: when, where, a cover image, tags, a public flag and RSVPs.
+--     Existing events keep working: every new column has a default.
+--       starts_at / ends_at  when it happens (ends_at null = starts_at + 3 hours)
+--       location             a place name or address, free text
+--       cover_url            public URL of an image in the event-covers bucket
+--       tags                 short lowercase labels people filter by
+--       is_public            true = shows in everyone's Discover feed
+--       host_name            the host's display name when the event was made
+--       going_count          people whose RSVP is "going" (kept by a trigger)
+--     event_members.rsvp is "going" or "maybe". Joining by code counts as going.
+-- ---------------------------------------------------------------------------
+alter table public.events
+  add column if not exists starts_at   timestamptz,
+  add column if not exists ends_at     timestamptz,
+  add column if not exists location    text    not null default '',
+  add column if not exists cover_url   text    not null default '',
+  add column if not exists tags        text[]  not null default '{}',
+  add column if not exists is_public   boolean not null default false,
+  add column if not exists host_name   text    not null default '',
+  add column if not exists going_count integer not null default 0;
+
+create index if not exists events_starts_at_idx on public.events (starts_at);
+create index if not exists events_public_idx on public.events (is_public) where is_public;
+
+alter table public.event_members
+  add column if not exists rsvp text not null default 'going';
+
+alter table public.event_members drop constraint if exists event_members_rsvp_check;
+alter table public.event_members
+  add constraint event_members_rsvp_check check (rsvp in ('going', 'maybe'));
+
+-- Keep events.going_count in step with the "going" rows.
+create or replace function public.refresh_going_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  ev uuid := coalesce(new.event_id, old.event_id);
+begin
+  update public.events
+     set going_count = (select count(*) from public.event_members
+                         where event_id = ev and rsvp = 'going')
+   where id = ev;
+  return null;
+end;
+$$;
+
+drop trigger if exists event_members_going_count on public.event_members;
+create trigger event_members_going_count
+  after insert or update of rsvp or delete on public.event_members
+  for each row execute function public.refresh_going_count();
+
+-- Public events are readable by every signed-in user (that is what Discover lists).
+drop policy if exists "Anyone can read public events" on public.events;
+create policy "Anyone can read public events"
+  on public.events for select
+  to authenticated
+  using (is_public);
+
+-- A member can change their own RSVP (never someone else's).
+drop policy if exists "Members can update own rsvp" on public.event_members;
+create policy "Members can update own rsvp"
+  on public.event_members for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- event-covers Storage bucket: anyone can view; a signed-in user writes only inside the
+-- folder named after their own user id, e.g. event-covers/<auth.uid()>/<file>.jpg
+insert into storage.buckets (id, name, public)
+values ('event-covers', 'event-covers', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Event covers are publicly readable"   on storage.objects;
+drop policy if exists "Users can upload own event covers"    on storage.objects;
+drop policy if exists "Users can update own event covers"    on storage.objects;
+drop policy if exists "Users can delete own event covers"    on storage.objects;
+
+create policy "Event covers are publicly readable"
+  on storage.objects for select
+  using (bucket_id = 'event-covers');
+
+create policy "Users can upload own event covers"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'event-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+create policy "Users can update own event covers"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'event-covers' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'event-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+create policy "Users can delete own event covers"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'event-covers' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ---------------------------------------------------------------------------
 -- Manual test notes
 -- ---------------------------------------------------------------------------
 -- 1. Paste this whole file into the SQL editor and run it. Run it a second time:
