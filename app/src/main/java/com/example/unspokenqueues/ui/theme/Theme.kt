@@ -7,9 +7,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+// Primary is ink, not the indigo accent: buttons stay neutral so the only saturated colors on
+// screen are the four cues. The accent lives on in chips, avatars and the selected tab.
 private val LightColorScheme = lightColorScheme(
-    primary = Accent,
-    onPrimary = Color.White,
+    primary = Ink,
+    onPrimary = Paper,
     background = Paper,
     onBackground = Ink,
     surface = Card,
@@ -23,8 +25,8 @@ private val LightColorScheme = lightColorScheme(
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = AccentDark,
-    onPrimary = Color(0xFF0E1140),
+    primary = InkDark,
+    onPrimary = PaperDark,
     background = PaperDark,
     onBackground = InkDark,
     surface = CardDark,

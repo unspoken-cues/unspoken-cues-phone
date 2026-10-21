@@ -65,7 +65,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.example.unspokenqueues.ui.components.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -128,6 +128,7 @@ import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Dot
+import com.example.unspokenqueues.ui.components.Halo
 import com.example.unspokenqueues.ui.components.EventListSkeleton
 import com.example.unspokenqueues.ui.components.ScreenTitle
 import com.example.unspokenqueues.ui.components.FullScreenQr
@@ -994,7 +995,7 @@ private fun AttendeeRow(person: Attendee) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.border(2.dp, person.status.color, CircleShape).padding(3.dp)) { Avatar(person.name, 40, person.profile.avatarUrl) }
+        Halo(person.status) { Avatar(person.name, 40, person.profile.avatarUrl) }
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             StatusLabel(person.status)
@@ -1602,7 +1603,7 @@ fun BinderScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Box(Modifier.border(2.dp, status.color, CircleShape).padding(3.dp)) {
+                Halo(status, glow = true) {
                     Avatar(profile.displayName, 56, profile.avatarImage)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1681,7 +1682,7 @@ private fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> U
 @Composable
 private fun CollectedTile(card: CollectedCard, modifier: Modifier, onClick: () -> Unit) {
     SectionCard(modifier.aspectRatio(0.8f).clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
-        Box(Modifier.border(2.dp, card.status.color, CircleShape).padding(2.dp)) {
+        Halo(card.status, gap = 2.dp) {
             Avatar(card.name, 36, card.profile.avatarUrl)
         }
         Spacer(Modifier.weight(1f))

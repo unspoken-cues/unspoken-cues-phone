@@ -21,7 +21,8 @@ val AccentDark = Color(0xFF9AA6FF)
 // Cue status colors
 val CueGreen = Color(0xFF2E9E5B)
 val CueYellow = Color(0xFFE8B517)
-val CueRed = Color(0xFFD94335)
+// Red is a touch deeper than a pure alert red so near-white text on it clears 4.5:1 (4.72:1).
+val CueRed = Color(0xFFCF3A2D)
 val CuePurple = Color(0xFF7B4FC9)
 
 // Text laid on a cue color: dark ink on green and yellow, near-white on red and purple.
