@@ -99,6 +99,7 @@ dependencies {
 
     // QR generation
     implementation(libs.zxing.core)
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

@@ -1198,12 +1198,12 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Wear OS watch", style = MaterialTheme.typography.titleMedium)
-                    Text("Last synced just now", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Pair your watch to receive phone updates", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 WatchPill(watch)
             }
             OutlinedButton(onReconnect, Modifier.fillMaxWidth()) {
-                Text(if (watch == WatchConnection.CONNECTED) "Disconnect" else "Reconnect")
+                Text("Sync now")
             }
         }
         SectionCard(title = "Appearance") {
