@@ -66,6 +66,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import com.example.unspokenqueues.ui.components.OutlinedButton
+import com.example.unspokenqueues.ui.components.PasswordField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -100,7 +101,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -320,13 +320,10 @@ private fun AuthForm(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            password, { password = it }, label = { Text("Password") }, singleLine = true,
-            enabled = !loading, visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = if (confirmPassword) ImeAction.Next else ImeAction.Done,
-            ),
+        PasswordField(
+            password, { password = it }, "Password",
+            enabled = !loading,
+            imeAction = if (confirmPassword) ImeAction.Next else ImeAction.Done,
             keyboardActions = KeyboardActions(onDone = { submit() }),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -335,10 +332,9 @@ private fun AuthForm(
         }
         if (confirmPassword) {
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                confirm, { confirm = it }, label = { Text("Confirm password") }, singleLine = true,
-                enabled = !loading, visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            PasswordField(
+                confirm, { confirm = it }, "Confirm password",
+                enabled = !loading,
                 keyboardActions = KeyboardActions(onDone = { submit() }),
                 modifier = Modifier.fillMaxWidth(),
             )
