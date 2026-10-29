@@ -107,7 +107,8 @@ class AuthRepository(
      * [EmailConfirmationRequiredException] so the caller can tell them to check their inbox.
      */
     suspend fun signUp(email: String, password: String) {
-        auth.signUpWith(Email) {
+        // The confirmation email's link lands on a real page instead of the project's Site URL.
+        auth.signUpWith(Email, redirectUrl = EMAIL_CONFIRMED_REDIRECT) {
             this.email = email.trim()
             this.password = password
         }

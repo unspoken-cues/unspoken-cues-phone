@@ -45,6 +45,30 @@ devices and the same debug signing certificate. The documented release IDs diffe
 production pairing requires a coordinated shared application ID/signing decision
 before publishing. See the companion README for installation and device checks.
 
+## Email confirmation page
+
+When someone creates an account, Supabase emails a confirmation link. After confirming, Supabase
+sends them to `https://unspoken-cues.github.io/unspoken-cues-phone/auth/confirmed/`, a small page
+in [`docs/auth/confirmed/`](docs/auth/confirmed/index.html). It says the email is confirmed (or
+that the link has expired) and has an **Open Unspoken Cues** button that opens the app on the
+sign-in form through `unspokencues://sign-in`. The page never sends the link's token anywhere and
+wipes it from the address bar.
+
+One-time setup:
+
+1. In GitHub, **Settings → Pages → Build and deployment**: Source **Deploy from a branch**, branch
+   `main`, folder `/docs`. The page is live a minute later.
+2. In Supabase, **Authentication → URL Configuration**:
+   - set **Site URL** to `https://unspoken-cues.github.io/unspoken-cues-phone/auth/confirmed/`, so
+     any email that has no redirect of its own lands there too;
+   - add the same URL under **Redirect URLs** (next to `unspokencues://password-reset`).
+3. In **Authentication → Email Templates → Confirm signup**, keep the link as
+   `{{ .ConfirmationURL }}`.
+
+Test: create an account with a fresh email, open the email on a phone with the app installed,
+tap the link, then **Open Unspoken Cues**: the app opens on sign-in. Opening the same link a
+second time should show the "link has expired" version of the page.
+
 ## Password recovery
 
 The sign-in screen includes **Forgot password?**. Supabase sends an email link that opens

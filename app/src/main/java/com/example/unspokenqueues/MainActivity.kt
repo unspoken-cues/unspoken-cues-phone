@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.unspokenqueues.data.AuthRepository
 import com.example.unspokenqueues.data.isPasswordRecoveryLink
+import com.example.unspokenqueues.data.isSignInLink
 import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventRepository
@@ -210,6 +211,17 @@ fun UnspokenCuesApp(
     var recoveryAttempt by rememberSaveable { mutableIntStateOf(0) }
     var recoveryError by remember { mutableStateOf<String?>(null) }
     var returnToSignIn by rememberSaveable { mutableStateOf(false) }
+    // Bumped each time the sign-in link opens the app, so the auth flow starts over on its form.
+    var signInLinkOpens by rememberSaveable { mutableIntStateOf(0) }
+
+    // The email-confirmed page sends people here. Signed out, it opens the sign-in form; signed
+    // in, there is nothing to do.
+    LaunchedEffect(openedLink) {
+        if (!isSignInLink(openedLink)) return@LaunchedEffect
+        returnToSignIn = true
+        signInLinkOpens++
+        onOpenedLinkHandled()
+    }
 
     LaunchedEffect(openedLink) {
         if (!isPasswordRecoveryLink(openedLink)) return@LaunchedEffect
@@ -431,7 +443,7 @@ fun UnspokenCuesApp(
     // is no card of theirs to swap before that), then ask before swapping: unlike a scan, a link
     // can be followed by accident, and swapping shares this user's card too.
     LaunchedEffect(openedLink, phase) {
-        if (openedLink != null && !isPasswordRecoveryLink(openedLink) && phase == AppPhase.MAIN) {
+        if (openedLink != null && !isPasswordRecoveryLink(openedLink) && !isSignInLink(openedLink) && phase == AppPhase.MAIN) {
             linkToConfirm = openedLink
             onOpenedLinkHandled()
         }
@@ -500,12 +512,14 @@ fun UnspokenCuesApp(
     if (phase == AppPhase.SIGNED_OUT) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
-                AuthFlow(
-                    onSignIn = { email, password -> authRepo.signIn(email, password) },
-                    onSignUp = { email, password -> authRepo.signUp(email, password) },
-                    onPasswordReset = { authRepo.requestPasswordReset(it) },
-                    startAtSignIn = returnToSignIn,
-                )
+                key(signInLinkOpens) {
+                    AuthFlow(
+                        onSignIn = { email, password -> authRepo.signIn(email, password) },
+                        onSignUp = { email, password -> authRepo.signUp(email, password) },
+                        onPasswordReset = { authRepo.requestPasswordReset(it) },
+                        startAtSignIn = returnToSignIn,
+                    )
+                }
             }
         }
         return
