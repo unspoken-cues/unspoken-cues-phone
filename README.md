@@ -2,12 +2,13 @@
 
 Android control center for **Unspoken Cues**: status (Green/Yellow/Red/Purple), profile, QR identity, Wear OS sync, and the S.W.A.P. digital card experience.
 
-Target package: `com.unspokencues.phone`
+Planned phone Play identity: `com.unspokencues.phone`. Current build application ID: `com.example.unspokenqueues`; coordinate the phone/watch release identity before publishing.
 
 ## Status
-Foundation phase — see [Issues](../../issues) and the org [Project board](https://github.com/orgs/unspoken-cues/projects) for current sprint work.
+The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, mutual S.W.A.P. cards/binder, and initial phone-to-watch synchronization. Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
 
 ## Docs
+- **Start here for engineering takeover:** [Engineering handoff](docs/handoff/README.md) — setup, architecture, feature flows, API calls, database/access rules, watch protocol, source map, testing, troubleshooting, and ownership transfer.
 - Contribution workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security/secret handling: [SECURITY.md](SECURITY.md)
 
@@ -25,6 +26,26 @@ Full product handoff lives outside this repo. Key rules:
 - Exactly four statuses, one active at a time.
 - Phone is the source-of-truth control surface; must sync reliably with the Wear OS app.
 - Final Play identity is `com.unspokencues.phone` — do not reuse `com.unspokencues.mobile` or leave a `playtest` applicationId in a release build.
+
+## Initial Wear OS companion
+
+The companion project is in `../unspoken-cues-wearos`; its original implementation
+plan referred to `luana-wearos`, so check the actual branch in your checkout.
+This phone app publishes the signed-in user's cue and public sharing information
+to `/unspoken-cues/state` using the Wear OS Data Layer. Open the phone app, complete
+onboarding, and pair your Wear OS watch; Settings → **Sync now** retries immediately.
+Updates also retry every 30 seconds while this app's composition is alive.
+
+The initial integration is phone-to-watch. Color changes made on the watch are
+local, and a newer phone snapshot replaces them. The watch uses the same
+`unspokencues://card/<token>` QR payload as the phone. No backend credentials are
+sent to the watch. Private profiles withhold their sharing token; sign-out sends
+an empty snapshot, which clears cached identity after delivery.
+
+Development builds currently pair using `com.example.unspokenqueues` on both
+devices and the same debug signing certificate. The documented release IDs differ;
+production pairing requires a coordinated shared application ID/signing decision
+before publishing. See the companion README for installation and device checks.
 
 ## Password recovery
 
