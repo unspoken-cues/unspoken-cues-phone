@@ -2,6 +2,7 @@ package com.example.unspokenqueues.ui.screens
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -107,6 +108,23 @@ class AuthFlowTest {
 
         compose.onNodeWithText("Couldn't reach the server. Check your connection and try again.").assertIsDisplayed()
         compose.onNodeWithText("supabase", substring = true, ignoreCase = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun signIn_eyeButton_showsAndHidesThePassword_withoutChangingIt() {
+        showFlow()
+        compose.onNodeWithText("Sign in").performClick()
+
+        compose.onNodeWithText("Email").performTextInput("sam@example.com")
+        compose.onNodeWithText("Password").performTextInput("hunter22")
+        compose.onNodeWithContentDescription("Hide password").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Show password").performClick()
+        compose.onNodeWithContentDescription("Hide password").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Show password").assertIsDisplayed()
+        compose.onNodeWithText("Sign in").performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("in:sam@example.com:hunter22"), submitted)
     }
 
     // ---------- Create account ----------

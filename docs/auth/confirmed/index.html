@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Email confirmed · Unspoken Cues</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Figtree:wght@400..700&display=swap" rel="stylesheet">
+<style>
+  /* Unspoken Cues design tokens (see the design system). */
+  :root {
+    --paper: #F6F2EA; --card: #FFFFFF; --line: #E6E0D4;
+    --ink: #1B1D22; --ink-soft: #5C6070;
+    --action: var(--ink); --on-action: var(--paper); --accent: #3B4CCA;
+    --cue-green: #2E9E5B; --cue-yellow: #E8B517; --cue-red: #CF3A2D; --cue-purple: #7B4FC9;
+    --wash: rgba(46, 158, 91, 0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #131211; --card: #1D1B19; --line: #2F2C28; --ink: #EDEAE4; --ink-soft: #A7A39B; --accent: #9AA6FF; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    min-height: 100vh; display: grid; place-items: center; padding: 24px 20px;
+    background: radial-gradient(circle at 0 0, var(--wash), transparent 70%) var(--paper);
+    color: var(--ink); font-family: "Figtree", system-ui, "Segoe UI", Roboto, sans-serif;
+  }
+  body.failed { --wash: rgba(232, 181, 23, 0.16); }
+  main { width: 100%; max-width: 400px; }
+  .dots { display: flex; gap: 6px; margin-bottom: 20px; }
+  .dots span { width: 14px; height: 14px; border-radius: 50%; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 28px; padding: 28px 24px; }
+  .mark { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; margin-bottom: 16px; color: #15171C; }
+  .mark svg { width: 28px; height: 28px; fill: currentColor; }
+  h1 { margin: 0 0 8px; font-family: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif; font-size: 32px; line-height: 38px; font-weight: 700; }
+  p { margin: 0 0 12px; font-size: 16px; line-height: 24px; letter-spacing: .2px; color: var(--ink-soft); }
+  .button {
+    display: flex; align-items: center; justify-content: center; width: 100%; min-height: 52px; margin-top: 20px;
+    border-radius: 999px; background: var(--action); color: var(--on-action); font-weight: 600; font-size: 15px; text-decoration: none;
+  }
+  .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .note { margin-top: 16px; font-size: 13px; line-height: 18px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="dots" aria-hidden="true">
+    <span style="background:var(--cue-green)"></span><span style="background:var(--cue-yellow)"></span>
+    <span style="background:var(--cue-red)"></span><span style="background:var(--cue-purple)"></span>
+  </div>
+
+  <section class="card" id="ok">
+    <div class="mark" style="background:var(--cue-green)" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z"/></svg>
+    </div>
+    <h1>You're confirmed</h1>
+    <p>Your email is verified and your Unspoken Cues account is ready.</p>
+    <p>Open the app and sign in with your email and password.</p>
+    <a class="button" href="unspokencues://sign-in">Open Unspoken Cues</a>
+    <p class="note">Reading this on a computer? Open the app on your phone and sign in there.</p>
+  </section>
+
+  <section class="card" id="failed" hidden>
+    <div class="mark" style="background:var(--cue-yellow)" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M1,21h22L12,2 1,21zM13,18h-2v-2h2v2zM13,14h-2v-4h2v4z"/></svg>
+    </div>
+    <h1 id="failed-title">This link didn't work</h1>
+    <p id="failed-text">It may have expired or already been used.</p>
+    <p>If you already confirmed, just sign in. Otherwise create the account again with the same email in the app and we'll send a fresh link.</p>
+    <a class="button" href="unspokencues://sign-in">Open Unspoken Cues</a>
+  </section>
+</main>
+<script>
+  // Supabase sends people here after confirming an email. On success the address carries a
+  // session (#access_token=…) or a code (?code=…); on failure it carries #error=… or ?error=….
+  // Nothing is sent anywhere: the page only reads whether there was an error, then wipes the
+  // address so no token is left in the browser history.
+  (function () {
+    var params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    new URLSearchParams(location.search).forEach(function (v, k) { if (!params.has(k)) params.set(k, v); });
+    var error = params.get('error_code') || params.get('error');
+    if (location.hash || location.search) history.replaceState(null, '', location.pathname);
+    if (!error) return;
+    document.body.classList.add('failed');
+    document.getElementById('ok').hidden = true;
+    document.getElementById('failed').hidden = false;
+    document.title = "Link didn't work · Unspoken Cues";
+    if (error === 'otp_expired') {
+      document.getElementById('failed-title').textContent = 'This link has expired';
+      document.getElementById('failed-text').textContent = 'Confirmation links only work for a limited time, and only once.';
+    }
+  })();
+</script>
+</body>
+</html>

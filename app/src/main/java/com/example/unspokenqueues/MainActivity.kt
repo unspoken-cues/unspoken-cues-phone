@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.unspokenqueues.data.AuthRepository
 import com.example.unspokenqueues.data.isPasswordRecoveryLink
+import com.example.unspokenqueues.data.isSignInLink
 import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventRepository
@@ -210,6 +211,17 @@ fun UnspokenCuesApp(
     var recoveryAttempt by rememberSaveable { mutableIntStateOf(0) }
     var recoveryError by remember { mutableStateOf<String?>(null) }
     var returnToSignIn by rememberSaveable { mutableStateOf(false) }
+    // Bumped each time the sign-in link opens the app, so the auth flow starts over on its form.
+    var signInLinkOpens by rememberSaveable { mutableIntStateOf(0) }
+
+    // The email-confirmed page sends people here. Signed out, it opens the sign-in form; signed
+    // in, there is nothing to do.
+    LaunchedEffect(openedLink) {
+        if (!isSignInLink(openedLink)) return@LaunchedEffect
+        returnToSignIn = true
+        signInLinkOpens++
+        onOpenedLinkHandled()
+    }
 
     LaunchedEffect(openedLink) {
         if (!isPasswordRecoveryLink(openedLink)) return@LaunchedEffect
@@ -254,7 +266,11 @@ fun UnspokenCuesApp(
     var profileLoadAttempt by remember { mutableIntStateOf(0) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
     var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
-    var watch by rememberSaveable { mutableStateOf(WatchConnection.CONNECTED) }
+    var watch by remember { mutableStateOf(WatchConnection.DISCONNECTED) }
+    var watchRetry by remember { mutableIntStateOf(0) }
+    var watchSessionKnown by remember { mutableStateOf(false) }
+    var watchProfileUserId by remember { mutableStateOf<String?>(null) }
+    var watchPublishedUserId by remember { mutableStateOf(prefs.getString("watch_owner", null)) }
     var profile by remember { mutableStateOf(MockData.profile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
     var showingSettings by rememberSaveable { mutableStateOf(false) }
@@ -278,8 +294,10 @@ fun UnspokenCuesApp(
             // out would flash the sign-in screen and throw away whatever screen the user was on.
             when (s) {
                 is SessionStatus.Authenticated -> {
+                    watchSessionKnown = true
                     val authenticatedUserId = authRepo.currentUserId()
                     if (userId != authenticatedUserId) {
+                        watchProfileUserId = null
                         onboardingComplete = null
                         profileSetupDone = false
                         profileLoadFailed = false
@@ -295,6 +313,8 @@ fun UnspokenCuesApp(
                     sessionUserId = userId
                 }
                 is SessionStatus.NotAuthenticated -> {
+                    watchSessionKnown = true
+                    watchProfileUserId = null
                     signedIn = false
                     userId = null
                     sessionUserId = null
@@ -327,6 +347,7 @@ fun UnspokenCuesApp(
                 // No row yet (e.g. older account): start blank and let the profile wizard create it.
                 profile = Profile("", "", emptyList(), emptyList(), isPublic = true)
             }
+            watchProfileUserId = uid
             when {
                 row?.onboardingComplete == true -> {
                     prefs.edit().putBoolean(onboardedKey(uid), true).apply()
@@ -368,6 +389,23 @@ fun UnspokenCuesApp(
         }
     }
 
+    // Never publish the mock/previous account's profile while authentication or loading is pending.
+    val companionSnapshot = when {
+        !watchSessionKnown -> null
+        !signedIn -> com.example.unspokenqueues.model.watchSnapshot(false, status, "", null, false)
+        watchProfileUserId != sessionUserId || sessionUserId == null || onboardingComplete != true ->
+            com.example.unspokenqueues.model.watchSnapshotWhileLoading(sessionUserId, watchPublishedUserId)
+        else -> com.example.unspokenqueues.model.watchSnapshot(true, status, profile.displayName, cardToken, profile.isPublic)
+    }
+    com.example.unspokenqueues.data.WatchSync(companionSnapshot, sessionUserId, watchRetry,
+        onConnection = { watch = it },
+        onPublished = { owner ->
+            if (watchPublishedUserId != owner) {
+                prefs.edit().putString("watch_owner", owner).apply()
+                watchPublishedUserId = owner
+            }
+        })
+
     // Swaps cards with whoever owns the card in [text]: a scanned QR code or a pasted link.
     fun collectCard(text: String) {
         val token = cardTokenFrom(text)
@@ -405,7 +443,7 @@ fun UnspokenCuesApp(
     // is no card of theirs to swap before that), then ask before swapping: unlike a scan, a link
     // can be followed by accident, and swapping shares this user's card too.
     LaunchedEffect(openedLink, phase) {
-        if (openedLink != null && !isPasswordRecoveryLink(openedLink) && phase == AppPhase.MAIN) {
+        if (openedLink != null && !isPasswordRecoveryLink(openedLink) && !isSignInLink(openedLink) && phase == AppPhase.MAIN) {
             linkToConfirm = openedLink
             onOpenedLinkHandled()
         }
@@ -474,12 +512,14 @@ fun UnspokenCuesApp(
     if (phase == AppPhase.SIGNED_OUT) {
         Scaffold { padding ->
             Box(Modifier.padding(padding)) {
-                AuthFlow(
-                    onSignIn = { email, password -> authRepo.signIn(email, password) },
-                    onSignUp = { email, password -> authRepo.signUp(email, password) },
-                    onPasswordReset = { authRepo.requestPasswordReset(it) },
-                    startAtSignIn = returnToSignIn,
-                )
+                key(signInLinkOpens) {
+                    AuthFlow(
+                        onSignIn = { email, password -> authRepo.signIn(email, password) },
+                        onSignUp = { email, password -> authRepo.signUp(email, password) },
+                        onPasswordReset = { authRepo.requestPasswordReset(it) },
+                        startAtSignIn = returnToSignIn,
+                    )
+                }
             }
         }
         return
@@ -620,7 +660,7 @@ fun UnspokenCuesApp(
                         themeMode = themeMode,
                         onThemeModeChange = onThemeModeChange,
                         onReconnect = {
-                            watch = if (watch == WatchConnection.CONNECTED) WatchConnection.DISCONNECTED else WatchConnection.CONNECTED
+                            watchRetry++
                         },
                         onSignOut = ::signOut,
                         onBack = { showingSettings = false },

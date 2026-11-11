@@ -14,9 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.unspokenqueues.data.authFailureMessage
+import com.example.unspokenqueues.ui.components.PasswordField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -140,18 +140,15 @@ fun NewPasswordScreen(
             else -> {
                 Text("Enter and confirm your new password.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(24.dp))
-                OutlinedTextField(
-                    password, { password = it }, label = { Text("New password") }, singleLine = true,
+                PasswordField(
+                    password, { password = it }, "New password",
                     enabled = !loading, modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                    imeAction = ImeAction.Next,
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    confirm, { confirm = it }, label = { Text("Confirm password") }, singleLine = true,
+                PasswordField(
+                    confirm, { confirm = it }, "Confirm password",
                     enabled = !loading, modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { save() }),
                 )
                 RecoveryError(error)
