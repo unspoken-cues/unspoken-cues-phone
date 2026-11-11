@@ -2,12 +2,13 @@
 
 Android control center for **Unspoken Cues**: status (Green/Yellow/Red/Purple), profile, QR identity, Wear OS sync, and the S.W.A.P. digital card experience.
 
-Target package: `com.unspokencues.phone`
+Planned phone Play identity: `com.unspokencues.phone`. Current build application ID: `com.example.unspokenqueues`; coordinate the phone/watch release identity before publishing.
 
 ## Status
-Foundation phase — see [Issues](../../issues) and the org [Project board](https://github.com/orgs/unspoken-cues/projects) for current sprint work.
+The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, mutual S.W.A.P. cards/binder, and initial phone-to-watch synchronization. Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
 
 ## Docs
+- **Start here for engineering takeover:** [Engineering handoff](docs/handoff/README.md) — setup, architecture, feature flows, API calls, database/access rules, watch protocol, source map, testing, troubleshooting, and ownership transfer.
 - Contribution workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security/secret handling: [SECURITY.md](SECURITY.md)
 
@@ -28,6 +29,8 @@ Full product handoff lives outside this repo. Key rules:
 
 ## Initial Wear OS companion
 
+The companion project is in `../unspoken-cues-wearos`; its original implementation
+plan referred to `luana-wearos`, so check the actual branch in your checkout.
 The companion project is in `../unspoken-cues-wearos` on branch `luana-wearos`.
 This phone app publishes the signed-in user's cue and public sharing information
 to `/unspoken-cues/state` using the Wear OS Data Layer. Open the phone app, complete
