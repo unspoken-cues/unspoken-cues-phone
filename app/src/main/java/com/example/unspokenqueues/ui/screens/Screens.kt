@@ -1251,7 +1251,7 @@ internal fun PersonDetail(
         AlertDialog(
             onDismissRequest = { confirmingRemove = false },
             title = { Text("Remove ${profile.displayName}?") },
-            text = { Text("Their card leaves your binder, and your card is removed from theirs. You'll need to swap again to reconnect.") },
+            text = { Text("Their card leaves your binder, and your card is removed from theirs. You'll need to swap again to reconnect. You'll also get a new QR code and link, so your old one stops working for anyone who hasn't swapped yet. People already in your binder aren't affected.") },
             confirmButton = {
                 TextButton(onRemove) { Text("Remove", color = MaterialTheme.colorScheme.error) }
             },

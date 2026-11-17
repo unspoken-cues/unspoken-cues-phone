@@ -20,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
@@ -133,7 +134,8 @@ class EventsScreenTest {
             UnspokenQueuesTheme {
                 CompositionLocalProvider(LocalClipboard provides clipboard) {
                     EventDetailScreen(
-                        repo, userId, CueStatus.GREEN, event,
+                        // Blocking and reporting aren't exercised here; nothing reaches the server.
+                        repo, object : SafetyRepository() {}, userId, CueStatus.GREEN, event,
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },

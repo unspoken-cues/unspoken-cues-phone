@@ -36,6 +36,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -75,6 +77,8 @@ import com.example.unspokenqueues.R
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.SafetyRepository
+import com.example.unspokenqueues.ui.components.ReportDialog
 import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
@@ -791,11 +795,13 @@ private fun PickRow(label: String, value: String, onClick: () -> Unit) {
  * the host also the join QR and the way to end it. Anyone can take the event off their list: an
  * attendee leaves it, the host deletes it for everyone. [status] is the viewer's own cue, which
  * colours the join QR's frame. [onEventChange] receives the event once it has changed (ended, or
- * a fresh going count); [onRemoved] is called once the viewer has left or deleted it.
+ * a fresh going count); [onRemoved] is called once the viewer has left or deleted it. Other
+ * attendees can be blocked or reported through [safety].
  */
 @Composable
 fun EventDetailScreen(
     repo: EventRepository,
+    safety: SafetyRepository,
     userId: String,
     status: CueStatus,
     event: Event,
@@ -817,6 +823,8 @@ fun EventDetailScreen(
     var copied by remember { mutableStateOf(false) }
     var confirmingEnd by remember { mutableStateOf(false) }
     var confirmingRemove by remember { mutableStateOf(false) }
+    var blocking by remember { mutableStateOf<Attendee?>(null) }
+    var reporting by remember { mutableStateOf<Attendee?>(null) }
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -875,6 +883,12 @@ fun EventDetailScreen(
     fun end() = perform("Couldn't end the event. Check your connection and try again.") {
         repo.endEvent(event.id)
         onEventChange(event.copy(active = false))
+    }
+
+    // Blocking hides each person from the other, so they leave this list too.
+    fun block(person: Attendee) = perform("Couldn't block ${person.name}. Check your connection and try again.") {
+        safety.block(person.userId)
+        attendees = attendees?.filter { it.userId != person.userId }
     }
 
     fun remove() = perform(
@@ -1034,7 +1048,13 @@ fun EventDetailScreen(
                 else -> SectionCard {
                     shown.forEachIndexed { i, person ->
                         if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        AttendeeRow(person)
+                        AttendeeRow(
+                            person,
+                            actionsEnabled = !working,
+                            // No actions on the viewer's own row.
+                            onBlock = { blocking = person }.takeIf { person.userId != userId },
+                            onReport = { reporting = person },
+                        )
                     }
                 }
             }
@@ -1088,6 +1108,20 @@ fun EventDetailScreen(
             dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
         )
     }
+    blocking?.let { person ->
+        ConfirmBlockDialog(person.name, onConfirm = { block(person) }, onDismiss = { blocking = null })
+    }
+    reporting?.let { person ->
+        ReportDialog(
+            person.name,
+            onSend = { reason, note -> safety.report(person.userId, reason, note, event.id) },
+            onSent = { alsoBlock ->
+                reporting = null
+                if (alsoBlock) block(person)
+            },
+            onDismiss = { reporting = null },
+        )
+    }
     if (confirmingRemove) {
         AlertDialog(
             onDismissRequest = { confirmingRemove = false },
@@ -1113,8 +1147,10 @@ fun EventDetailScreen(
     }
 }
 
+// [onBlock] is null for the viewer's own row, which then has no actions menu.
 @Composable
-private fun AttendeeRow(person: Attendee) {
+private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() -> Unit)?, onReport: () -> Unit) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1126,6 +1162,23 @@ private fun AttendeeRow(person: Attendee) {
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             status?.let { StatusLabel(it) }
+        }
+        if (onBlock != null) {
+            Box {
+                IconButton({ menuOpen = true }, enabled = actionsEnabled) {
+                    Icon(painterResource(R.drawable.ic_more_vert), contentDescription = "More options for ${person.name}")
+                }
+                DropdownMenu(menuOpen, { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Block") }, onClick = {
+                        menuOpen = false
+                        onBlock()
+                    })
+                    DropdownMenuItem(text = { Text("Report") }, onClick = {
+                        menuOpen = false
+                        onReport()
+                    })
+                }
+            }
         }
     }
 }

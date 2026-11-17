@@ -99,20 +99,17 @@ class SwapRepository(
             .decodeAs<ProfileRow>()
             .toCollectedCard()
 
-    /** Deletes the swap between the two users, removing each from the other's binder. */
-    suspend fun removeSwap(userId: String, otherUserId: String) {
-        postgrest.from(SWAPS).delete {
-            filter {
-                or {
-                    and { eq("user_a", userId); eq("user_b", otherUserId) }
-                    and { eq("user_a", otherUserId); eq("user_b", userId) }
-                }
-            }
-        }
+    /**
+     * Ends the swap with [otherUserId], removing each from the other's binder, and replaces the
+     * signed-in user's card token so their old QR code and link stop working. Call [myCardToken]
+     * afterwards for the new one.
+     */
+    suspend fun removeSwap(otherUserId: String) {
+        postgrest.rpc(REMOVE_RPC, buildJsonObject { put("other_id", otherUserId) })
     }
 
     companion object {
-        private const val SWAPS = "swaps"
+        private const val REMOVE_RPC = "remove_swap"
         private const val TOKEN_RPC = "my_card_token"
         private const val SWAP_RPC = "swap_by_card_token"
         private const val BINDER_RPC = "binder_cards"

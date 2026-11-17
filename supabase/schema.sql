@@ -847,6 +847,35 @@ $$;
 revoke execute on function public.block_user(uuid) from public, anon;
 grant  execute on function public.block_user(uuid) to authenticated;
 
+-- Ends the caller's swap with other_id and gives the caller a new card token. The
+-- token never changes otherwise, so without this the removed person could swap
+-- again from the old link or a photo of the QR code. Deleting the caller's
+-- card_tokens row is enough: my_card_token() makes a fresh one when next asked.
+-- Rotates even when there is no swap row, since the swap may already have expired.
+-- SECURITY DEFINER because card_tokens has no delete policy.
+create or replace function public.remove_swap(other_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  delete from public.swaps s
+  where s.user_a = least(me, other_id) and s.user_b = greatest(me, other_id);
+
+  delete from public.card_tokens ct where ct.user_id = me;
+end;
+$$;
+
+revoke execute on function public.remove_swap(uuid) from public, anon;
+grant  execute on function public.remove_swap(uuid) to authenticated;
+
 -- The people the caller has blocked, newest first, with their names so the app can
 -- list them for unblocking (the caller can't read their profiles any more).
 create or replace function public.my_blocked_users()
@@ -942,7 +971,7 @@ grant  execute on function public.my_blocked_users() to authenticated;
 --
 --    select proname from pg_proc
 --     where proname in ('binder_cards', 'event_attendees', 'make_swap_temporary', 'block_user',
---                       'my_blocked_users', 'blocked_between', 'active_swap');  -- 7 rows
+--                       'my_blocked_users', 'blocked_between', 'active_swap', 'remove_swap');  -- 8 rows
 --
 --    The checks below need three real users from auth.users: a host, and users 1
 --    and 2 who have both joined one of the host's events (join_event_by_code, as in
@@ -1037,4 +1066,17 @@ grant  execute on function public.my_blocked_users() to authenticated;
 --      select * from public.event_attendees('<event-id>');  -- user 2's row, status RED
 --      set local request.jwt.claims = '{"sub": "<some-other-user-id>", "role": "authenticated"}';
 --      select * from public.event_attendees('<event-id>');  -- error 42501: Not part of this event
+--    rollback;
+--
+--    g. Removing someone gives the remover a new card token:
+--
+--    begin;
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select public.my_card_token();                     -- user 1's old token
+--      select public.remove_swap('<user-2-id>');
+--      select * from public.swaps;                        -- no rows: the swap ended
+--      select public.my_card_token();                     -- a different token
+--      set local request.jwt.claims = '{"sub": "<user-2-id>", "role": "authenticated"}';
+--      select * from public.swap_by_card_token('<user 1 old token>');  -- error P0002 No card with that code
 --    rollback;
