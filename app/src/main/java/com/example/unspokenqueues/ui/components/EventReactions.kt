@@ -49,14 +49,14 @@ fun EventReactionsSection(
     event: Event,
     userId: String,
     status: CueStatus,
-    isProfilePublic: Boolean = false,
+    profileVisibleForWaves: Boolean = false,
 ) {
     if (userId.isBlank()) {
         SectionCard(title = "Waves") { Text("Sign in to use waves.") }
         return
     }
     // Disposal cancels pending work and drops every private result when event/account/cue changes.
-    key(repository, event.id, userId, status, isProfilePublic, event.active, event.effectiveEnd()) {
+    key(repository, event.id, userId, status, profileVisibleForWaves, event.active, event.effectiveEnd()) {
         val end = event.effectiveEnd()
         var expired by remember { mutableStateOf(end?.let { !Instant.now().isBefore(it) } ?: false) }
         LaunchedEffect(end) {
@@ -65,7 +65,7 @@ fun EventReactionsSection(
                 expired = true
             }
         }
-        val localCueAllows = isProfilePublic && (status == CueStatus.GREEN || status == CueStatus.YELLOW)
+        val localCueAllows = profileVisibleForWaves && (status == CueStatus.GREEN || status == CueStatus.YELLOW)
         EventReactionsContent(repository, event.id, userId, localCueAllows && event.active && !expired) {
             localCueAllows && event.active && (end == null || Instant.now().isBefore(end))
         }
@@ -209,14 +209,14 @@ private fun EventReactionsContent(
                 )
             }
             Text(
-                "Off by default for each event. Turning this on lets other opted-in participants wave while both profiles are public and both cues are Green or Yellow. Turning it off hides your inbox and stops incoming and outgoing waves.",
+                "Off by default for each event. Turning this on lets other opted-in participants wave when both of you share a public profile and a visible Green or Yellow cue. Turning it off hides your inbox and stops incoming and outgoing waves.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (working && sendingTo == null) Text("Saving Receive waves…", style = MaterialTheme.typography.bodySmall)
             when {
                 !current.receiveWaves -> Text("Waves are off for this event.")
-                !current.canWave -> Text("Waves need an active event, a public profile and a Green or Yellow cue.")
+                !current.canWave -> Text("Waves need an active event, Private Mode off, a public profile and a visible Green or Yellow cue.")
                 else -> {
                     HorizontalDivider()
                     Text("Wave to a participant", style = MaterialTheme.typography.titleSmall)

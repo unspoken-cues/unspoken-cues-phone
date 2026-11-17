@@ -36,6 +36,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -78,6 +80,8 @@ import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.ui.components.EventReactionsSection
+import com.example.unspokenqueues.data.SafetyRepository
+import com.example.unspokenqueues.ui.components.ReportDialog
 import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
@@ -100,7 +104,6 @@ import com.example.unspokenqueues.model.phase
 import com.example.unspokenqueues.model.tagLabel
 import com.example.unspokenqueues.model.tagsOf
 import com.example.unspokenqueues.model.upcomingEvents
-import com.example.unspokenqueues.model.visibleAttendees
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Chip
@@ -797,11 +800,13 @@ private fun PickRow(label: String, value: String, onClick: () -> Unit) {
  * the host also the join QR and the way to end it. Anyone can take the event off their list: an
  * attendee leaves it, the host deletes it for everyone. [status] is the viewer's own cue, which
  * colours the join QR's frame. [onEventChange] receives the event once it has changed (ended, or
- * a fresh going count); [onRemoved] is called once the viewer has left or deleted it.
+ * a fresh going count); [onRemoved] is called once the viewer has left or deleted it. Other
+ * attendees can be blocked or reported through [safety].
  */
 @Composable
 fun EventDetailScreen(
     repo: EventRepository,
+    safety: SafetyRepository,
     userId: String,
     status: CueStatus,
     event: Event,
@@ -810,16 +815,20 @@ fun EventDetailScreen(
     onBack: () -> Unit,
     announcementRepo: AnnouncementRepository? = null,
     reactionRepository: ReactionRepository = remember { ReactionRepository() },
-    isProfilePublic: Boolean = false,
+    profileVisibleForWaves: Boolean = false,
 ) {
     key(event.id, userId) {
-        EventDetailContent(repo, userId, status, event, onEventChange, onRemoved, onBack, announcementRepo, reactionRepository, isProfilePublic)
+        EventDetailContent(
+            repo, safety, userId, status, event, onEventChange, onRemoved, onBack,
+            announcementRepo, reactionRepository, profileVisibleForWaves,
+        )
     }
 }
 
 @Composable
 private fun EventDetailContent(
     repo: EventRepository,
+    safety: SafetyRepository,
     userId: String,
     status: CueStatus,
     event: Event,
@@ -828,7 +837,7 @@ private fun EventDetailContent(
     onBack: () -> Unit,
     announcementRepo: AnnouncementRepository?,
     reactionRepository: ReactionRepository,
-    isProfilePublic: Boolean,
+    profileVisibleForWaves: Boolean,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -846,6 +855,9 @@ private fun EventDetailContent(
     var copied by remember { mutableStateOf(false) }
     var confirmingEnd by remember { mutableStateOf(false) }
     var confirmingRemove by remember { mutableStateOf(false) }
+    var waveRefreshAfterBlock by remember { mutableIntStateOf(0) }
+    var blocking by remember { mutableStateOf<Attendee?>(null) }
+    var reporting by remember { mutableStateOf<Attendee?>(null) }
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -906,6 +918,13 @@ private fun EventDetailContent(
     fun end() = perform("Couldn't end the event. Check your connection and try again.") {
         repo.endEvent(event.id)
         onEventChange(event.copy(active = false))
+    }
+
+    // Blocking hides each person from the other, so they leave this list too.
+    fun block(person: Attendee) = perform("Couldn't block ${person.name}. Check your connection and try again.") {
+        safety.block(person.userId)
+        waveRefreshAfterBlock++
+        attendees = attendees?.filter { it.userId != person.userId }
     }
 
     fun remove() = perform(
@@ -1032,11 +1051,10 @@ private fun EventDetailContent(
             }
         }
 
-        // The rule lives in visibleAttendees: the host sees everyone, others only green and yellow.
-        val visible = attendees?.let { visibleAttendees(userId, event.hostId, it) }
+        // The server applies the rule: the host sees everyone, others only green and yellow.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (visible == null) "Attendees" else "Attendees · ${visible.size}",
+                attendees?.let { "Attendees · ${it.size}" } ?: "Attendees",
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -1050,7 +1068,7 @@ private fun EventDetailContent(
             )
         }
         AnimatedContent(
-            targetState = visible,
+            targetState = attendees,
             transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
             // Only loading → loaded fades; a refresh updates the list in place.
             contentKey = { it == null },
@@ -1066,7 +1084,13 @@ private fun EventDetailContent(
                 else -> SectionCard {
                     shown.forEachIndexed { i, person ->
                         if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        AttendeeRow(person)
+                        AttendeeRow(
+                            person,
+                            actionsEnabled = !working,
+                            // No actions on the viewer's own row.
+                            onBlock = { blocking = person }.takeIf { person.userId != userId },
+                            onReport = { reporting = person },
+                        )
                     }
                 }
             }
@@ -1081,9 +1105,10 @@ private fun EventDetailContent(
 
         if (isHost || (membershipLoaded && rsvp != null)) {
             EventAnnouncements(event, userId, announcements)
+            key(waveRefreshAfterBlock) {
+                EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+            }
         }
-
-        EventReactionsSection(reactionRepository, event, userId, status, isProfilePublic)
 
         actionError?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
@@ -1126,6 +1151,20 @@ private fun EventDetailContent(
             dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
         )
     }
+    blocking?.let { person ->
+        ConfirmBlockDialog(person.name, onConfirm = { block(person) }, onDismiss = { blocking = null })
+    }
+    reporting?.let { person ->
+        ReportDialog(
+            person.name,
+            onSend = { reason, note -> safety.report(person.userId, reason, note, event.id) },
+            onSent = { alsoBlock ->
+                reporting = null
+                if (alsoBlock) block(person)
+            },
+            onDismiss = { reporting = null },
+        )
+    }
     if (confirmingRemove) {
         AlertDialog(
             onDismissRequest = { confirmingRemove = false },
@@ -1151,17 +1190,38 @@ private fun EventDetailContent(
     }
 }
 
+// [onBlock] is null for the viewer's own row, which then has no actions menu.
 @Composable
-private fun AttendeeRow(person: Attendee) {
+private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() -> Unit)?, onReport: () -> Unit) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Halo(person.status) { Avatar(person.name, 40, person.profile.avatarUrl) }
+        // A null status means they hide their cue color: no ring and no label.
+        val status = person.status
+        if (status != null) Halo(status) { Avatar(person.name, 40, person.profile.avatarUrl) } else Avatar(person.name, 40, person.profile.avatarUrl)
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            StatusLabel(person.status)
+            status?.let { StatusLabel(it) }
+        }
+        if (onBlock != null) {
+            Box {
+                IconButton({ menuOpen = true }, enabled = actionsEnabled) {
+                    Icon(painterResource(R.drawable.ic_more_vert), contentDescription = "More options for ${person.name}")
+                }
+                DropdownMenu(menuOpen, { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Block") }, onClick = {
+                        menuOpen = false
+                        onBlock()
+                    })
+                    DropdownMenuItem(text = { Text("Report") }, onClick = {
+                        menuOpen = false
+                        onReport()
+                    })
+                }
+            }
         }
     }
 }

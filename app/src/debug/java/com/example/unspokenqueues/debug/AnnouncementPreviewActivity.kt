@@ -43,16 +43,17 @@ class AnnouncementPreviewActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             UnspokenQueuesTheme {
-                val sample = remember { AnnouncementSample() }
                 var userId by remember { mutableStateOf("sample-host") }
+                val safety = remember { PreviewSafetyRepository { userId } }
+                val sample = remember { AnnouncementSample(safety) }
                 var removed by remember { mutableStateOf(false) }
                 val waves = remember(userId) {
                     object : ReactionRepository() {
                         var opted = false
                         val sent = mutableSetOf<String>()
-                        fun snapshot() = ReactionState(opted, opted,
+                        fun snapshot() = safety.visibleWaves(ReactionState(opted, opted,
                             if (opted) listOf(WaveRecipient("sample-friend", "Jordan", "sample-friend" in sent)) else emptyList(),
-                            if (opted) listOf(Reaction("sample-friend", "Jordan", Instant.now().minusSeconds(300))) else emptyList())
+                            if (opted) listOf(Reaction("sample-friend", "Jordan", Instant.now().minusSeconds(300))) else emptyList()))
                         override suspend fun state(eventId: String) = snapshot()
                         override suspend fun setReceiveWaves(eventId: String, receiveWaves: Boolean): ReactionState { opted = receiveWaves; return snapshot() }
                         override suspend fun send(eventId: String, recipientId: String): Instant { sent += recipientId; return Instant.now() }
@@ -72,12 +73,12 @@ class AnnouncementPreviewActivity : ComponentActivity() {
                         } else {
                             Column(Modifier.weight(1f)) {
                                 EventDetailScreen(
-                                    sample.events, userId, CueStatus.GREEN, sample.event,
+                                    sample.events, safety, userId, CueStatus.GREEN, sample.event,
                                     onEventChange = { sample.event = it },
                                     onRemoved = { removed = true },
                                     onBack = { finish() },
                                     announcementRepo = sample.announcements,
-                                    reactionRepository = waves, isProfilePublic = true,
+                                    reactionRepository = waves, profileVisibleForWaves = true,
                                 )
                             }
                         }
@@ -88,7 +89,7 @@ class AnnouncementPreviewActivity : ComponentActivity() {
     }
 }
 
-private class AnnouncementSample {
+private class AnnouncementSample(private val safety: PreviewSafetyRepository) {
     private val now = Instant.now()
     var event by mutableStateOf(Event(
         "sample-event", "sample-host", "Friday Night Mixer", "A relaxed evening to meet new people. Check Announcements below for the latest from your host.",
@@ -105,7 +106,7 @@ private class AnnouncementSample {
         override suspend fun eventAttendees(eventId: String): List<Attendee> = listOf(
             Attendee("sample-member", Profile("Sam", "", emptyList(), emptyList(), true), CueStatus.GREEN),
             Attendee("sample-friend", Profile("Jordan", "", emptyList(), emptyList(), true), CueStatus.YELLOW),
-        )
+        ).filter { safety.visible(it.userId) }
         override suspend fun myRsvps(userId: String): Map<String, Rsvp> =
             if (userId == "sample-member") mapOf(event.id to answer) else emptyMap()
         override suspend fun event(eventId: String): Event = this@AnnouncementSample.event

@@ -8,6 +8,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.example.unspokenqueues.data.SafetyRepository
+import com.example.unspokenqueues.model.BlockedUser
 import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
@@ -15,6 +17,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+
+/** A [SafetyRepository] that answers from memory, so these tests never reach the server. */
+private class FakeSafetyRepository(blocked: List<BlockedUser> = emptyList()) : SafetyRepository() {
+    val blocked = blocked.toMutableList()
+    val unblocked = mutableListOf<String>()
+
+    override suspend fun blockedUsers(): List<BlockedUser> = blocked.toList()
+
+    override suspend fun unblock(otherUserId: String) {
+        unblocked += otherUserId
+        blocked.removeAll { it.userId == otherUserId }
+    }
+}
 
 @RunWith(AndroidJUnit4::class)
 class SettingsScreenTest {
@@ -24,10 +39,11 @@ class SettingsScreenTest {
 
     private val clicks = mutableListOf<String>()
 
-    private fun showSettings() {
+    private fun showSettings(safety: SafetyRepository = FakeSafetyRepository()) {
         compose.setContent {
             UnspokenQueuesTheme {
                 SettingsScreen(
+                    safety = safety,
                     watch = WatchConnection.CONNECTED,
                     themeMode = ThemeMode.SYSTEM,
                     onThemeModeChange = { clicks += "theme" },
@@ -99,5 +115,27 @@ class SettingsScreenTest {
         replay()
 
         compose.onNodeWithContentDescription("Page 1 of 5").assertIsDisplayed()
+    }
+
+    // ---------- Blocked people ----------
+
+    @Test
+    fun withNobodyBlocked_saysSo() {
+        showSettings()
+
+        compose.onNodeWithText("You haven't blocked anyone.").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun unblock_removesThePerson() {
+        val safety = FakeSafetyRepository(listOf(BlockedUser("u2", "Sam")))
+        showSettings(safety)
+
+        compose.onNodeWithText("Sam").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Unblock").performClick()
+
+        compose.onNodeWithText("Sam").assertDoesNotExist()
+        compose.onNodeWithText("You haven't blocked anyone.").assertExists()
+        assertEquals(listOf("u2"), safety.unblocked)
     }
 }

@@ -127,6 +127,12 @@ class EventScheduleTest {
     }
 
     @Test
+    fun formatWhen_forAnInstant_readsLikeAnEventTime() {
+        // A temporary swap's end time.
+        assertEquals("Tomorrow, 9:30 AM", formatWhen(Instant.parse("2026-10-22T09:30:00Z"), now, zone))
+    }
+
+    @Test
     fun formatWhen_withNoTime_saysSo() {
         assertEquals("Time to be announced", formatWhen(event(), now, zone))
     }

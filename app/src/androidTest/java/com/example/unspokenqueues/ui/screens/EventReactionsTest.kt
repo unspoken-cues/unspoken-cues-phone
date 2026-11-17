@@ -81,7 +81,7 @@ class EventReactionsTest {
         compose.setContent {
             UnspokenQueuesTheme {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                    EventReactionsSection(repo, event, user, status, isProfilePublic = true)
+                    EventReactionsSection(repo, event, user, status, profileVisibleForWaves = true)
                 }
             }
         }
@@ -187,7 +187,7 @@ class EventReactionsTest {
     @Test fun localRedAndPurpleOverrideAStaleGreenServerSnapshot() {
         val repo = FakeReactionRepository().apply { snapshot = snapshot.copy(inbox = listOf(wave)) }
         var status by mutableStateOf(CueStatus.RED)
-        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, "member", status, isProfilePublic = true) } }
+        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, "member", status, profileVisibleForWaves = true) } }
         compose.onNodeWithText("Harper Host").assertDoesNotExist()
         compose.onNodeWithText("Jamie waved").assertDoesNotExist()
         compose.runOnIdle { status = CueStatus.PURPLE }
@@ -198,7 +198,7 @@ class EventReactionsTest {
 
     @Test fun localPrivateProfileOverridesAStalePublicServerSnapshot() {
         val repo = FakeReactionRepository().apply { snapshot = snapshot.copy(inbox = listOf(wave)) }
-        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, "member", CueStatus.GREEN, isProfilePublic = false) } }
+        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, "member", CueStatus.GREEN, profileVisibleForWaves = false) } }
         compose.onNodeWithText("Harper Host").assertDoesNotExist()
         compose.onNodeWithText("Jamie waved").assertDoesNotExist()
         assertTrue(repo.sends.isEmpty())
@@ -218,7 +218,7 @@ class EventReactionsTest {
     @Test fun changingAccountCancelsOldLoadAndDiscardsPrivateResults() {
         val repo = FakeReactionRepository().apply { loadGate = CompletableDeferred() }
         var user by mutableStateOf("member")
-        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, user, CueStatus.GREEN, isProfilePublic = true) } }
+        compose.setContent { UnspokenQueuesTheme { EventReactionsSection(repo, event, user, CueStatus.GREEN, profileVisibleForWaves = true) } }
         compose.runOnIdle { user = "" }
         compose.runOnIdle { repo.loadGate!!.complete(Unit) }
         compose.onNodeWithText("Sign in to use waves.").assertIsDisplayed()

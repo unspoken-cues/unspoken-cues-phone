@@ -4,7 +4,7 @@ Waves are an optional, event-scoped hello between consenting participants. They 
 
 ## Setup and deployment
 
-Review and apply [202611170002_quick_reactions.sql](../../supabase/migrations/202611170002_quick_reactions.sql) to an existing development database before exercising the real repository. The migration is transactional and repeatable. New databases can use [schema.sql](../../supabase/schema.sql), whose final wave definitions match the migration. Existing `events`, `event_members`, `profiles`, `auth.users`, `auth.uid()`, and the Supabase `authenticated`/`anon` roles must exist. No new dependencies, Storage buckets, secrets or background services are required. The Android client uses its existing Supabase project and signed-in session. These changes have **not** been deployed to a live backend.
+Review and apply [202611170002_quick_reactions.sql](../../supabase/migrations/202611170002_quick_reactions.sql) to an existing development database before exercising the real repository. The migration is transactional and repeatable. New databases can use [schema.sql](../../supabase/schema.sql), whose final wave definitions match the migration. Apply the privacy schema from `main` first. Waves depend on `profiles.private_mode`, `profiles.show_status`, and the bilateral `blocked_between` helper. Existing `events`, `event_members`, `profiles`, `auth.users`, `auth.uid()`, and the Supabase `authenticated`/`anon` roles must exist. No new dependencies, Storage buckets, secrets or background services are required. The Android client uses its existing Supabase project and signed-in session. These changes have **not** been deployed to a live backend.
 
 An unmigrated backend reports a recoverable waves load error; event, RSVP, QR and attendee actions remain available. Build with the existing SDK and Gradle setup. Tests and the sample preview use fakes and require no Supabase credentials.
 
@@ -14,7 +14,7 @@ An unmigrated backend reports a recoverable waves load error; event, RSVP, QR an
 
 - `event_wave_state(p_event_id)`: the caller's setting, actionable public Green/Yellow recipients and own newest-first inbox. No arbitrary recipient inbox or participant preference list is exposed. Opted-out or otherwise ineligible callers receive no targets/history.
 - `set_event_wave_preference(p_event_id, p_receive_waves)`: explicit caller consent only. It returns the acknowledged private state.
-- `send_event_wave(p_event_id, p_recipient_id)`: derives sender from `auth.uid()`; rejects self, outsiders, opted-out people, private profiles, Red/Purple cues, inactive events and elapsed schedules. The host is a participant and has no privacy exception.
+- `send_event_wave(p_event_id, p_recipient_id)`: derives sender from `auth.uid()`; rejects self, outsiders, opted-out people, private profiles, Private Mode, hidden cues, blocks in either direction, Red/Purple cues, inactive events and elapsed schedules. The host is a participant and has no privacy exception.
 
 An event without an explicit end expires three hours after its start. Undated events remain usable until the host ends them. Server checks use the current database clock after acquiring locks. A unique primary key and `ON CONFLICT DO NOTHING` make repeated/concurrent retries persist one wave and return its original timestamp.
 
@@ -26,11 +26,11 @@ Waves update on initial load and **Refresh waves**; there is no background deliv
 
 ## Verify with two accounts
 
-1. Apply the migration to a development project. Account A hosts an active event; B joins. With public Green/Yellow profiles and both preferences OFF, neither can wave.
+1. Apply the migration to a development project. Account A hosts an active event and B joins. With public Green/Yellow profiles and both preferences OFF, neither can wave.
 2. Enable Receive waves as A only: B must still be unavailable. Enable it as B. Both should see an eligible participant row, including the host even if the host never joined their own event.
 3. As B, tap **Wave** once. Confirm **Sending…** becomes disabled **Sent** only after the server acknowledgement. Refresh; it remains Sent. Repeating the same RPC returns the same timestamp and does not add a wave.
 4. As A, use **Refresh waves**. **Waves for you** contains B's current display name and timestamp, newest first. B and an unrelated account cannot read A's inbox. No binder entry or notification is created.
-5. Switch either account private, Red or Purple; refresh both. Targets and matching inbox history must disappear. A host must also be denied when directly calling `send_event_wave`. Restore public Yellow/Green and verify eligibility.
+5. Try Private Mode, a hidden cue, a private profile, and a Red or Purple cue one at a time. Refresh both accounts after each change. Targets and matching inbox history must disappear. A host must also be denied when directly calling `send_event_wave`. Restore public visibility and a visible Yellow/Green cue, then block the other account. Check that both people disappear from each other’s wave list and inbox. Unblock before continuing.
 6. Disable Receive waves. Confirm history hides while pending, stops incoming/outgoing sends, and survives reopening as OFF. Disconnect networking while saving/sending: show an unconfirmed/error state, then retry with networking restored. Do not assume a failed response means the server did not commit.
 7. Leave and rejoin as B: consent must reset to OFF. Re-enable it and verify the original pair still has only one wave. End/expire the event and verify sends fail, including direct RPC calls. Delete the event and verify wave/preferences cascade.
 
@@ -44,7 +44,7 @@ JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradle
 JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.example.unspokenqueues.ui.screens.EventsScreenTest
 ```
 
-The role fixture [quick_reactions_authorization.sql](../../supabase/tests/quick_reactions_authorization.sql) uses authenticated/anonymous roles, not admin-only assertions. Run it after the canonical schema or an upgraded baseline in a disposable PostgreSQL database with the usual Supabase Auth/Storage contracts. An optional [minimal bootstrap](../../supabase/tests/quick_reactions_bootstrap.sql) exists for an empty isolated PostgreSQL/PGlite database; never apply the bootstrap to a deployed project. With psql, use `-v ON_ERROR_STOP=1`. The fixture seeds test accounts in a transaction and rolls back. It covers direct table bypass, sender spoofing, helper privilege, consent/defaults, self/outsider/host rules, own-inbox isolation, current privacy/cues, expiry, duplicate requests, departure/rejoin and cascades.
+The role fixture [quick_reactions_authorization.sql](../../supabase/tests/quick_reactions_authorization.sql) uses authenticated/anonymous roles, not admin-only assertions. Run it after the canonical schema or an upgraded baseline in a disposable PostgreSQL database with the usual Supabase Auth/Storage contracts. For an empty, disposable database, the [psql bootstrap](../../supabase/tests/quick_reactions_bootstrap.sql) loads the shared Auth and Storage fixtures and the complete app schema. For PGlite, execute `supabase/tests/bootstrap.sql` and `supabase/schema.sql` in that order. With psql, use `-v ON_ERROR_STOP=1`. The fixture seeds test accounts in a transaction and rolls back. It covers direct table bypass, sender spoofing, helper privilege, consent/defaults, self/outsider/host rules, own-inbox isolation, current privacy/cues, expiry, duplicate requests, departure/rejoin and cascades.
 
 Actual validation during implementation:
 
@@ -66,7 +66,7 @@ Scroll past attendees to **Waves**. Sample data starts OFF, like production. Tur
 
 ## Rollback and limitations
 
-Prefer leaving the additive schema in place while rolling back the app; older clients ignore it. To remove the feature, first roll back clients, back up data, then transactionally drop `event_members_reset_wave_consent`, the three public RPCs, `reset_event_wave_consent_on_leave()`, `event_wave_participant(uuid,uuid)`, and the two wave tables. Removing tables permanently deletes consent/history; do not execute rollback as part of normal setup. No event/profile/RSVP policies need changes.
+Prefer leaving the additive schema in place while rolling back the app; older clients ignore it. To remove the feature, first roll back clients, back up data, then transactionally drop `event_members_reset_wave_consent`, the three public RPCs, `reset_event_wave_consent_on_leave()`, `event_wave_participant(uuid,uuid)`, `event_wave_visible(public.profiles,uuid)`, and the two wave tables. Removing tables permanently deletes consent/history; do not execute rollback as part of normal setup. No event/profile/RSVP policies need changes.
 
 Targets/inbox are fetched as an event snapshot without pagination; suitable for the current small event experience. Event-level serialization favors privacy and atomicity over high-throughput bulk reactions. Errors, deadlock victims or lost responses can be retried safely. There is no automatic live inbox refresh or read receipt. Authenticated role fixtures validate the SQL contract in isolation; a final two-account development-project verification checks the hosted PostgREST/JWT integration before deployment.
 

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -59,6 +60,7 @@ import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ProfileRepository
+import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.SwapRepository
 import com.example.unspokenqueues.data.swapFailureMessage
 import com.example.unspokenqueues.data.toCueStatus
@@ -67,7 +69,6 @@ import com.example.unspokenqueues.model.AppPhase
 import com.example.unspokenqueues.model.CollectedCard
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
-import com.example.unspokenqueues.model.MockData
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.SwapResult
 import com.example.unspokenqueues.model.ThemeMode
@@ -201,6 +202,7 @@ fun UnspokenCuesApp(
     val authRepo = remember { AuthRepository() }
     val profileRepo = remember { ProfileRepository() }
     val swapRepo = remember { SwapRepository() }
+    val safetyRepo = remember { SafetyRepository() }
     val eventRepo = remember { EventRepository() }
     val eventCoverRepo = remember { EventCoverRepository() }
     val avatarRepo = remember { AvatarRepository() }
@@ -271,7 +273,7 @@ fun UnspokenCuesApp(
     var watchSessionKnown by remember { mutableStateOf(false) }
     var watchProfileUserId by remember { mutableStateOf<String?>(null) }
     var watchPublishedUserId by remember { mutableStateOf(prefs.getString("watch_owner", null)) }
-    var profile by remember { mutableStateOf(MockData.profile) }
+    var profile by remember { mutableStateOf(BlankProfile) }
     var editingProfile by rememberSaveable { mutableStateOf(false) }
     var showingSettings by rememberSaveable { mutableStateOf(false) }
     var creatingEvent by rememberSaveable { mutableStateOf(false) }
@@ -286,6 +288,23 @@ fun UnspokenCuesApp(
     // A card link that opened the app and is waiting for the user to agree to the swap.
     var linkToConfirm by rememberSaveable { mutableStateOf<String?>(null) }
 
+    // Whoever signs in next starts from "not known yet", not from this account's answers, and must
+    // not see (or save over their own row) this account's profile, status, card or open event.
+    fun forgetAccount() {
+        watchProfileUserId = null
+        onboardingComplete = null
+        profileSetupDone = false
+        profileLoadFailed = false
+        profile = BlankProfile
+        status = CueStatus.GREEN
+        cardToken = null
+        collection = emptyList()
+        creatingEvent = false
+        openEvent = null
+        editingProfile = false
+        showingSettings = false
+    }
+
     // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
     LaunchedEffect(Unit) {
         authRepo.sessionStatus.collect { s ->
@@ -296,35 +315,17 @@ fun UnspokenCuesApp(
                 is SessionStatus.Authenticated -> {
                     watchSessionKnown = true
                     val authenticatedUserId = authRepo.currentUserId()
-                    if (userId != authenticatedUserId) {
-                        watchProfileUserId = null
-                        onboardingComplete = null
-                        profileSetupDone = false
-                        profileLoadFailed = false
-                        cardToken = null
-                        collection = emptyList()
-                        creatingEvent = false
-                        openEvent = null
-                        editingProfile = false
-                        showingSettings = false
-                    }
+                    if (userId != authenticatedUserId) forgetAccount()
                     signedIn = true
                     userId = authenticatedUserId
                     sessionUserId = userId
                 }
                 is SessionStatus.NotAuthenticated -> {
                     watchSessionKnown = true
-                    watchProfileUserId = null
                     signedIn = false
                     userId = null
                     sessionUserId = null
-                    // Whoever signs in next starts from "not known yet", not from this account's answer.
-                    onboardingComplete = null
-                    profileSetupDone = false
-                    profileLoadFailed = false
-                    // The next account to sign in must not land in this one's event.
-                    creatingEvent = false
-                    openEvent = null
+                    forgetAccount()
                 }
                 else -> Unit
             }
@@ -345,7 +346,7 @@ fun UnspokenCuesApp(
                 status = row.toCueStatus()
             } else {
                 // No row yet (e.g. older account): start blank and let the profile wizard create it.
-                profile = Profile("", "", emptyList(), emptyList(), isPublic = true)
+                profile = BlankProfile
             }
             watchProfileUserId = uid
             when {
@@ -371,8 +372,8 @@ fun UnspokenCuesApp(
         if (!signedIn) {
             collection = emptyList()
         } else if (tab == Tab.BINDER || tab == Tab.CUE) {
-            val uid = authRepo.currentUserId() ?: return@LaunchedEffect
-            runCatching { swapRepo.loadBinder(uid) }.onSuccess { collection = it }
+            authRepo.currentUserId() ?: return@LaunchedEffect
+            runCatching { swapRepo.loadBinder() }.onSuccess { collection = it }
         }
     }
 
@@ -390,12 +391,13 @@ fun UnspokenCuesApp(
     }
 
     // Never publish the mock/previous account's profile while authentication or loading is pending.
+    // In Private Mode the watch is told the profile isn't public, so it holds back the card token.
     val companionSnapshot = when {
         !watchSessionKnown -> null
         !signedIn -> com.example.unspokenqueues.model.watchSnapshot(false, status, "", null, false)
         watchProfileUserId != sessionUserId || sessionUserId == null || onboardingComplete != true ->
             com.example.unspokenqueues.model.watchSnapshotWhileLoading(sessionUserId, watchPublishedUserId)
-        else -> com.example.unspokenqueues.model.watchSnapshot(true, status, profile.displayName, cardToken, profile.isPublic)
+        else -> com.example.unspokenqueues.model.watchSnapshot(true, status, profile.displayName, cardToken, profile.isPublic && !profile.privateMode)
     }
     com.example.unspokenqueues.data.WatchSync(companionSnapshot, sessionUserId, watchRetry,
         onConnection = { watch = it },
@@ -412,6 +414,8 @@ fun UnspokenCuesApp(
         when {
             token == null -> swapResult = SwapResult.Failed("That isn't an Unspoken Cues card code.")
             token == cardToken -> swapResult = SwapResult.Failed(swapFailureMessage(SwapRepository.OWN_CARD))
+            // The server refuses too; checking here also covers a card link opened from outside the app.
+            profile.privateMode -> swapResult = SwapResult.Failed(swapFailureMessage(SwapRepository.PRIVATE_MODE_ON))
             !swapping -> {
                 swapping = true
                 scope.launch {
@@ -432,11 +436,32 @@ fun UnspokenCuesApp(
     }
 
     val phase = appPhase(signedIn, onboardingComplete, profileSetupDone)
+    // Returning users reach the tabs before their profile has loaded; until it has, `profile` is
+    // blank and must not be edited, or saving would write the blank over their real row.
+    val profileLoaded = sessionUserId != null && watchProfileUserId == sessionUserId
 
     fun signOut() {
         scope.launch { runCatching { authRepo.signOut() } }
         showingSettings = false
         tab = Tab.CUE
+    }
+
+    // Saves a change the screen already shows. If the save fails, [revert] runs and the user is told
+    // [failMessage]. [revert] should only undo when the state still holds this change, so a quick
+    // second change isn't rolled back to a stale value.
+    fun saveOrRevert(failMessage: String, revert: () -> Unit, save: suspend (userId: String) -> Unit) {
+        val id = authRepo.currentUserId() ?: return
+        scope.launch {
+            try {
+                save(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // After an account switch the change belonged to someone else's screen.
+                if (userId == id) revert()
+                Toast.makeText(context, failMessage, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // A card link opened the app. Wait until the user is signed in and through onboarding (there
@@ -476,6 +501,12 @@ fun UnspokenCuesApp(
                 tab = Tab.BINDER
             },
             onDismiss = { swapResult = null },
+            onMakeTemporary = {
+                val card = (result as SwapResult.Swapped).card
+                val endsAt = swapRepo.makeTemporary(card.userId)
+                collection = collection.map { if (it.userId == card.userId) it.copy(expiresAt = endsAt) else it }
+                endsAt
+            },
         )
     }
 
@@ -586,9 +617,10 @@ fun UnspokenCuesApp(
     // Hosting an event and an event's detail are reached from the Events tab and cover it.
     val uid = userId
     val overlay = when {
-        editingProfile -> Overlay.EDIT_PROFILE
+        editingProfile && profileLoaded -> Overlay.EDIT_PROFILE
         showingSettings -> Overlay.SETTINGS
-        creatingEvent && uid != null -> Overlay.CREATE_EVENT
+        // The event stores the host's display name, which is blank until the profile has loaded.
+        creatingEvent && uid != null && profileLoaded -> Overlay.CREATE_EVENT
         openEvent != null && uid != null -> Overlay.EVENT_DETAIL
         else -> Overlay.NONE
     }
@@ -635,18 +667,13 @@ fun UnspokenCuesApp(
                             avatarRepo.uploadCardImage(contentResolver, id, uri)
                         },
                         onSave = { updated ->
-                            val cardImageChanged = updated.cardImageUrl != profile.cardImageUrl
+                            // Saved before closing; if this throws the screen reports it and stays open.
+                            val id = authRepo.currentUserId() ?: error("Not signed in")
+                            profileRepo.upsertProfile(id, updated, status)
+                            // Its own call: the card image has its own column.
+                            if (updated.cardImageUrl != profile.cardImageUrl) profileRepo.updateCardImage(id, updated.cardImageUrl)
                             profile = updated
                             editingProfile = false
-                            val id = authRepo.currentUserId()
-                            if (id != null) {
-                                scope.launch {
-                                    runCatching { profileRepo.upsertProfile(id, updated, status) }
-                                    // Its own call: the card image has its own column, and a failure here
-                                    // must not undo the rest of the save.
-                                    if (cardImageChanged) runCatching { profileRepo.updateCardImage(id, updated.cardImageUrl) }
-                                }
-                            }
                         },
                         onCancel = { editingProfile = false },
                     )
@@ -656,6 +683,7 @@ fun UnspokenCuesApp(
             Overlay.SETTINGS -> Scaffold { padding ->
                 Box(Modifier.padding(padding)) {
                     SettingsScreen(
+                        safety = safetyRepo,
                         watch = watch,
                         themeMode = themeMode,
                         onThemeModeChange = onThemeModeChange,
@@ -690,13 +718,14 @@ fun UnspokenCuesApp(
                     if (event != null && uid != null) {
                         EventDetailScreen(
                             repo = eventRepo,
+                            safety = safetyRepo,
                             userId = uid,
                             status = status,
                             event = event,
                             onEventChange = { openEvent = it },
                             onRemoved = { openEvent = null },
                             onBack = { openEvent = null },
-                            isProfilePublic = profile.isPublic,
+                            profileVisibleForWaves = profile.isPublic && !profile.privateMode && profile.privacy.showStatus,
                         )
                     }
                 }
@@ -707,10 +736,13 @@ fun UnspokenCuesApp(
                 onTabChange = { tab = it },
             ) { shownTab ->
                 when (shownTab) {
-                    Tab.CUE -> CueScreen(status, watch) { newStatus ->
+                    Tab.CUE -> CueScreen(status, watch, profile.privateMode) { newStatus ->
+                        val before = status
                         status = newStatus
-                        val id = authRepo.currentUserId()
-                        if (id != null) scope.launch { runCatching { profileRepo.updateStatus(id, newStatus) } }
+                        saveOrRevert(
+                            "Couldn't update your cue. Check your connection.",
+                            revert = { if (status == newStatus) status = before },
+                        ) { id -> profileRepo.updateStatus(id, newStatus) }
                     }
                     Tab.EVENTS -> if (uid != null) {
                         EventsScreen(
@@ -732,32 +764,80 @@ fun UnspokenCuesApp(
                         profile = profile,
                         collection = collection,
                         onRemove = { card ->
-                            val id = authRepo.currentUserId()
-                            if (id != null) {
-                                val before = collection
-                                collection = collection - card
-                                scope.launch {
-                                    // Put the card back if the server didn't delete the swap.
-                                    runCatching { swapRepo.removeSwap(id, card.userId) }.onFailure { collection = before }
+                            collection = collection - card
+                            // Put the card back if the server didn't delete the swap.
+                            saveOrRevert(
+                                "Couldn't remove that card. Check your connection.",
+                                revert = { if (collection.none { it.userId == card.userId }) collection = (collection + card).sortedBy { it.name.lowercase() } },
+                            ) { id ->
+                                swapRepo.removeSwap(card.userId)
+                                // The server gave this user a new card token. The removal already
+                                // happened, so failing to fetch the new one must not revert it; the
+                                // token effect tries again on the next tab change.
+                                if (userId == id) {
+                                    cardToken = null
+                                    try {
+                                        cardToken = swapRepo.myCardToken()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        cardTokenFailed = true
+                                    }
                                 }
                             }
                         },
-                    )
-                    Tab.PROFILE -> ProfileScreen(
-                        profile = profile,
-                        onEdit = { editingProfile = true },
-                        onVisibilityChange = { isPublic ->
-                            profile = profile.copy(isPublic = isPublic)
-                            val id = authRepo.currentUserId()
-                            if (id != null) scope.launch { runCatching { profileRepo.updateVisibility(id, isPublic) } }
+                        onBlock = { card ->
+                            collection = collection - card
+                            saveOrRevert(
+                                "Couldn't block ${card.name}. Check your connection.",
+                                revert = { if (collection.none { it.userId == card.userId }) collection = (collection + card).sortedBy { it.name.lowercase() } },
+                            ) { safetyRepo.block(card.userId) }
                         },
-                        onOpenSettings = { showingSettings = true },
+                        onReport = { card, reason, note -> safetyRepo.report(card.userId, reason, note, eventId = null) },
                     )
+                    Tab.PROFILE -> if (!profileLoaded) {
+                        AccountLoadingScreen(
+                            failed = profileLoadFailed,
+                            onRetry = { profileLoadAttempt++ },
+                            onSignOut = ::signOut,
+                        )
+                    } else {
+                        ProfileScreen(
+                            profile = profile,
+                            onEdit = { editingProfile = true },
+                            onVisibilityChange = { isPublic ->
+                                profile = profile.copy(isPublic = isPublic)
+                                saveOrRevert(
+                                    "Couldn't update your profile visibility. Check your connection.",
+                                    revert = { if (profile.isPublic == isPublic) profile = profile.copy(isPublic = !isPublic) },
+                                ) { id -> profileRepo.updateVisibility(id, isPublic) }
+                            },
+                            onPrivateModeChange = { on ->
+                                profile = profile.copy(privateMode = on)
+                                saveOrRevert(
+                                    "Couldn't update Private Mode. Check your connection.",
+                                    revert = { if (profile.privateMode == on) profile = profile.copy(privateMode = !on) },
+                                ) { id -> profileRepo.updatePrivateMode(id, on) }
+                            },
+                            onPrivacyChange = { privacy ->
+                                val before = profile.privacy
+                                profile = profile.copy(privacy = privacy)
+                                saveOrRevert(
+                                    "Couldn't update your privacy settings. Check your connection.",
+                                    revert = { if (profile.privacy == privacy) profile = profile.copy(privacy = before) },
+                                ) { id -> profileRepo.updatePrivacy(id, privacy) }
+                            },
+                            onOpenSettings = { showingSettings = true },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+// The profile before this account's row has loaded, and for an account that has no row yet.
+private val BlankProfile = Profile("", "", emptyList(), emptyList(), isPublic = true)
 
 // What covers the tabs, if anything. [depth] decides which way a change slides.
 private enum class Overlay(val depth: Int) {

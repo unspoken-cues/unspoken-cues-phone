@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -24,7 +25,10 @@ import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ReactionRepository
+import com.example.unspokenqueues.model.Reaction
 import com.example.unspokenqueues.model.ReactionState
+import com.example.unspokenqueues.model.WaveRecipient
+import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
@@ -142,19 +146,25 @@ class EventsScreenTest {
         compose.waitUntil(timeoutMillis = 5_000) { hostEventButton().isDisplayed() }
     }
 
-    private fun showDetail(repo: EventRepository, userId: String, event: Event = mixer) {
+    private fun showDetail(
+        repo: EventRepository,
+        userId: String,
+        event: Event = mixer,
+        safety: SafetyRepository = SafetyRepository(),
+        waves: ReactionRepository = object : ReactionRepository() {
+            override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
+        },
+    ) {
         compose.setContent {
             UnspokenQueuesTheme {
                 CompositionLocalProvider(LocalClipboard provides clipboard) {
                     EventDetailScreen(
-                        repo, userId, CueStatus.GREEN, event,
+                        repo, safety, userId, CueStatus.GREEN, event,
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
-                        isProfilePublic = true,
-                        reactionRepository = object : ReactionRepository() {
-                            override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
-                        },
+                        profileVisibleForWaves = true,
+                        reactionRepository = waves,
                         announcementRepo = object : AnnouncementRepository() {
                             override suspend fun announcements(eventId: String): List<Announcement> = emptyList()
                         },
@@ -244,24 +254,44 @@ class EventsScreenTest {
     // ---------- Event detail ----------
 
     @Test
-    fun detail_forAnAttendee_hidesRedAndPurple() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "green")
+    fun detail_forAnAttendee_showsWhoTheServerSends() {
+        // event_attendees() leaves out red and purple attendees for anyone but the host.
+        showDetail(FakeEventRepository(attendees = everyone.take(2)), userId = "green")
 
         compose.onNodeWithText("Design Mixer").assertIsDisplayed()
         compose.onNodeWithText("Gia Green").assertIsDisplayed()
         compose.onNodeWithText("Yan Yellow").assertIsDisplayed()
-        compose.onNodeWithText("Rae Red").assertDoesNotExist()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
         compose.onNodeWithText("Attendees · 2").assertIsDisplayed()
     }
 
     @Test
-    fun detail_forAnAttendeeWhoIsRed_stillShowsThemselves() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "red")
-
-        compose.onNodeWithText("Rae Red").assertIsDisplayed()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
-        compose.onNodeWithText("Attendees · 3").assertIsDisplayed()
+    fun blockingAnAttendeeRemovesTheirWavesWithoutManualRefresh() {
+        val person = everyone.first()
+        var blockedId: String? = null
+        val safety = object : SafetyRepository() {
+            override suspend fun block(otherUserId: String) { blockedId = otherUserId }
+        }
+        val waves = object : ReactionRepository() {
+            override suspend fun state(eventId: String): ReactionState {
+                if (blockedId == person.userId) return ReactionState(true, true, emptyList(), emptyList())
+                return ReactionState(
+                    true, true,
+                    listOf(WaveRecipient(person.userId, person.name, false)),
+                    listOf(Reaction(person.userId, person.name, java.time.Instant.now())),
+                )
+            }
+        }
+        showDetail(FakeEventRepository(attendees = listOf(person)), "host", safety = safety, waves = waves)
+        val target = compose.onNodeWithContentDescription("Wave to ${person.name}")
+        val history = compose.onNodeWithText("${person.name} waved")
+        target.performScrollTo().assertIsDisplayed()
+        history.performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("More options for ${person.name}").performScrollTo().performClick()
+        compose.onNodeWithText("Block").performClick()
+        compose.onNodeWithText("Block").performClick()
+        compose.runOnIdle { assertEquals(person.userId, blockedId) }
+        target.assertDoesNotExist()
+        history.assertDoesNotExist()
     }
 
     @Test

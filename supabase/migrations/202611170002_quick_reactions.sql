@@ -30,6 +30,14 @@ returns boolean language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function public.event_wave_participant(uuid, uuid) from public, anon, authenticated;
 
+-- Shared by the inbox, recipient list and send path. Both sides of a block are hidden.
+create or replace function public.event_wave_visible(p public.profiles, viewer uuid)
+returns boolean language sql stable set search_path = '' as $$
+  select p.is_public and not p.private_mode and p.show_status and p.status in ('GREEN', 'YELLOW')
+    and (p.id = viewer or not public.blocked_between(p.id, viewer));
+$$;
+revoke all on function public.event_wave_visible(public.profiles, uuid) from public, anon, authenticated;
+
 -- A private snapshot, not a participant preference directory. Targets are actionable public
 -- Green/Yellow participants only, and only returned to an eligible opted-in caller.
 create or replace function public.event_wave_state(p_event_id uuid)
@@ -55,7 +63,7 @@ begin
     where e.id = p_event_id and e.active
       and (coalesce(e.ends_at, e.starts_at + interval '3 hours') is null
         or coalesce(e.ends_at, e.starts_at + interval '3 hours') > clock_timestamp())
-      and p.is_public and p.status in ('GREEN', 'YELLOW')) into eligible;
+      and public.event_wave_visible(p, me)) into eligible;
   if eligible then
     select coalesce(jsonb_agg(jsonb_build_object(
       'user_id', p.id, 'display_name', p.display_name,
@@ -63,7 +71,7 @@ begin
         and w.sender_id = me and w.recipient_id = p.id)) order by p.display_name, p.id), '[]'::jsonb)
     into targets from public.profiles p join public.event_wave_preferences pref on pref.user_id = p.id
     where pref.event_id = p_event_id and pref.receive_waves and p.id <> me
-      and p.is_public and p.status in ('GREEN', 'YELLOW')
+      and public.event_wave_visible(p, me)
       and public.event_wave_participant(p_event_id, p.id);
     select coalesce(jsonb_agg(jsonb_build_object(
       'sender_id', p.id, 'sender_name', p.display_name, 'created_at', w.created_at)
@@ -71,7 +79,7 @@ begin
     into inbox from public.event_waves w join public.profiles p on p.id = w.sender_id
       join public.event_wave_preferences pref on pref.event_id = w.event_id and pref.user_id = p.id
     where w.event_id = p_event_id and w.recipient_id = me and pref.receive_waves
-      and p.is_public and p.status in ('GREEN', 'YELLOW')
+      and public.event_wave_visible(p, me)
       and public.event_wave_participant(p_event_id, p.id);
   end if;
   return jsonb_build_object('receive_waves', opted, 'can_wave', eligible,
@@ -119,7 +127,7 @@ begin
     or not public.event_wave_participant(p_event_id, me)
     or not public.event_wave_participant(p_event_id, p_recipient_id)
     or (select count(*) from public.profiles p where p.id in (me, p_recipient_id)
-      and p.is_public and p.status in ('GREEN', 'YELLOW')) <> 2
+      and public.event_wave_visible(p, me)) <> 2
     or (select count(*) from public.event_wave_preferences pref where pref.event_id = p_event_id
       and pref.user_id in (me, p_recipient_id) and pref.receive_waves) <> 2 then
     raise exception 'Wave unavailable' using errcode = '42501';

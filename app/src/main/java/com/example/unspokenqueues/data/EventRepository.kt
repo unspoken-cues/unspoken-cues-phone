@@ -6,6 +6,7 @@ import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.generateJoinCode
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -62,8 +63,8 @@ fun joinFailureMessage(sqlState: String?): String = when (sqlState) {
 /**
  * Creates, lists, joins and ends events in the `events` / `event_members` tables.
  *
- * Row Level Security decides what each call can touch: a user only ever sees events they host or
- * have joined, and only the host can change an event.
+ * Row Level Security decides what each call can touch: a user sees events they host or have
+ * joined plus every public event, and only the host can change an event.
  *
  * Open so UI tests can swap in a fake that never talks to the server.
  */
@@ -111,30 +112,44 @@ open class EventRepository(
             .toEvent()
 
     /**
-     * Events the user hosts or has joined, newest first. Row Level Security already limits the
-     * `events` table to exactly those rows for the signed-in user, so no filter is sent.
+     * Events [userId] hosts or has joined, newest first. The filter is sent explicitly because Row
+     * Level Security also lets every signed-in user read all public events.
      */
-    @Suppress("UNUSED_PARAMETER")
-    open suspend fun myEvents(userId: String): List<Event> =
-        postgrest.from(EVENTS)
-            .select { order("created_at", Order.DESCENDING) }
+    open suspend fun myEvents(userId: String): List<Event> {
+        // user_id is read too only because EventMemberRow requires it.
+        val joinedIds = postgrest.from(MEMBERS)
+            .select(Columns.list("event_id", "user_id")) { filter { eq("user_id", userId) } }
+            .decodeList<EventMemberRow>()
+            .map { it.eventId }
+        return postgrest.from(EVENTS)
+            .select {
+                filter {
+                    // An empty `in.()` is invalid, so the host check stands alone when nothing was joined.
+                    if (joinedIds.isEmpty()) {
+                        eq("host_id", userId)
+                    } else {
+                        or {
+                            eq("host_id", userId)
+                            isIn("id", joinedIds)
+                        }
+                    }
+                }
+                order("created_at", Order.DESCENDING)
+            }
             .decodeList<EventRow>()
             .map { it.toEvent() }
-
-    /** Everyone who has joined the event, in the order they joined. */
-    open suspend fun eventAttendees(eventId: String): List<Attendee> {
-        val members = postgrest.from(MEMBERS)
-            .select {
-                filter { eq("event_id", eventId) }
-                order("joined_at", Order.ASCENDING)
-            }
-            .decodeList<EventMemberRow>()
-        if (members.isEmpty()) return emptyList()
-        val profiles = postgrest.from(PROFILES)
-            .select { filter { isIn("id", members.map { it.userId }) } }
-            .decodeList<ProfileRow>()
-        return members.toAttendees(profiles)
     }
+
+    /**
+     * Everyone who has joined the event that the signed-in user may see, in the order they joined.
+     * The server applies the privacy rules: it leaves out people in Private Mode, blocks either
+     * way, and (unless the user hosts it) anyone whose cue is red or purple, and blanks the fields
+     * an attendee hides from people they haven't swapped with.
+     */
+    open suspend fun eventAttendees(eventId: String): List<Attendee> =
+        postgrest.rpc(ATTENDEES_RPC, buildJsonObject { put("p_event_id", eventId) })
+            .decodeList<AttendeeRow>()
+            .map { it.toAttendee() }
 
     /**
      * Joins the active event with this code as the signed-in user and returns it. Throws a
@@ -227,8 +242,8 @@ open class EventRepository(
     companion object {
         private const val EVENTS = "events"
         private const val MEMBERS = "event_members"
-        private const val PROFILES = "profiles"
         private const val JOIN_RPC = "join_event_by_code"
+        private const val ATTENDEES_RPC = "event_attendees"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.

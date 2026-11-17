@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.debug.PreviewSafetyRepository
 import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
@@ -45,12 +46,13 @@ class ReactionPreviewActivity : ComponentActivity() {
                     mutableStateOf(Event("sample-event", "host", "Friday Mixer", "A relaxed evening of games and conversation.", "SAMPLE", true,
                         startsAt = now.minusSeconds(1800), endsAt = now.plusSeconds(7200), location = "Community lounge", hostName = "Harper", goingCount = 3))
                 }
+                val safety = remember { PreviewSafetyRepository { "me" } }
                 val events = remember {
                     object : EventRepository() {
                         override suspend fun eventAttendees(eventId: String) = listOf(
                             Attendee("me", Profile("You", "", emptyList(), emptyList(), true), CueStatus.GREEN),
                             Attendee("jordan", Profile("Jordan", "", emptyList(), emptyList(), true), CueStatus.YELLOW),
-                        )
+                        ).filter { safety.visible(it.userId) }
                         override suspend fun myRsvps(userId: String) = mapOf("sample-event" to Rsvp.GOING)
                         override suspend fun event(eventId: String): Event? = null
                         override suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) = Unit
@@ -66,9 +68,9 @@ class ReactionPreviewActivity : ComponentActivity() {
                     object : ReactionRepository() {
                         var opted = false
                         val sentTo = mutableSetOf<String>()
-                        fun sample() = ReactionState(opted, opted,
+                        fun sample() = safety.visibleWaves(ReactionState(opted, opted,
                             if (opted) listOf(WaveRecipient("jordan", "Jordan", "jordan" in sentTo), WaveRecipient("host", "Harper · Host", "host" in sentTo)) else emptyList(),
-                            if (opted) listOf(Reaction("jordan", "Jordan", now.minusSeconds(300))) else emptyList())
+                            if (opted) listOf(Reaction("jordan", "Jordan", now.minusSeconds(300))) else emptyList()))
                         override suspend fun state(eventId: String): ReactionState { delay(250); return sample() }
                         override suspend fun setReceiveWaves(eventId: String, receiveWaves: Boolean): ReactionState {
                             delay(500); opted = receiveWaves; return sample()
@@ -83,9 +85,9 @@ class ReactionPreviewActivity : ComponentActivity() {
                         Text("Sample preview · Waves use local sample data", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Box(Modifier.weight(1f)) {
-                            EventDetailScreen(events, "me", CueStatus.GREEN, event,
+                            EventDetailScreen(events, safety, "me", CueStatus.GREEN, event,
                                 onEventChange = { event = it }, onRemoved = {}, onBack = { finish() },
-                                announcementRepo = announcements, reactionRepository = reactions, isProfilePublic = true)
+                                announcementRepo = announcements, reactionRepository = reactions, profileVisibleForWaves = true)
                         }
                     }
                 }

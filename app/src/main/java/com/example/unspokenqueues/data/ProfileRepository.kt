@@ -2,6 +2,7 @@ package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.ProfilePrivacy
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 
@@ -51,6 +52,28 @@ class ProfileRepository(
     /** Updates only the public-visibility flag. */
     suspend fun updateVisibility(userId: String, isPublic: Boolean) {
         table().update(mapOf("is_public" to isPublic)) {
+            filter { eq("id", userId) }
+        }
+    }
+
+    /** Updates only which fields people the user hasn't swapped with may see. */
+    suspend fun updatePrivacy(userId: String, privacy: ProfilePrivacy) {
+        table().update(
+            mapOf(
+                "show_photo" to privacy.showPhoto,
+                "show_bio" to privacy.showBio,
+                "show_preferences" to privacy.showPreferences,
+                "show_boundaries" to privacy.showBoundaries,
+                "show_status" to privacy.showStatus,
+            ),
+        ) {
+            filter { eq("id", userId) }
+        }
+    }
+
+    /** Turns Private Mode on or off: hides the profile from everyone and pauses swaps while on. */
+    suspend fun updatePrivateMode(userId: String, on: Boolean) {
+        table().update(mapOf("private_mode" to on)) {
             filter { eq("id", userId) }
         }
     }

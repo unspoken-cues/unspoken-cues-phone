@@ -111,7 +111,13 @@ fun ProfileSetupWizard(
                 pickedPhoto?.let { uploadedPhoto = it }
                 pickedPhoto = null
                 failure = "Couldn't save your profile. Check your connection and try again."
-                onFinish(Profile(name.trim(), bio.trim(), preferences, boundaries, isPublic, url, uploadedPhoto.takeIf { url.isNotBlank() }))
+                // A copy, so Private Mode and the privacy toggles (not asked here) stay as they are.
+                onFinish(
+                    initial.copy(
+                        displayName = name.trim(), bio = bio.trim(), preferences = preferences, boundaries = boundaries,
+                        isPublic = isPublic, avatarUrl = url, localAvatar = uploadedPhoto.takeIf { url.isNotBlank() },
+                    ),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -195,7 +201,7 @@ fun ProfileSetupWizard(
                     )
                 }
                 SetupStep.PRIVACY -> SectionCard {
-                    ToggleRow("Public profile", "Anyone who scans your QR can view it", isPublic) { isPublic = it }
+                    ToggleRow("Public profile", "People at your events can see your profile", isPublic) { isPublic = it }
                 }
             }
 

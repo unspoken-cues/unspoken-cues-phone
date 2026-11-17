@@ -2,6 +2,7 @@ package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.ProfilePrivacy
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -26,6 +27,14 @@ data class ProfileRow(
     @SerialName("card_image_url") val cardImageUrl: String = "",
     // Whether the user has finished the first-run walkthrough.
     @SerialName("onboarding_complete") val onboardingComplete: Boolean = false,
+    // Privacy settings. Like onboarding_complete, written only by their own ProfileRepository
+    // calls, never by the profile upsert, so saving a profile can't reset them.
+    @SerialName("private_mode") val privateMode: Boolean = false,
+    @SerialName("show_photo") val showPhoto: Boolean = true,
+    @SerialName("show_bio") val showBio: Boolean = true,
+    @SerialName("show_preferences") val showPreferences: Boolean = true,
+    @SerialName("show_boundaries") val showBoundaries: Boolean = true,
+    @SerialName("show_status") val showStatus: Boolean = true,
 )
 
 /**
@@ -34,7 +43,8 @@ data class ProfileRow(
  * `onboarding_complete` is left out on purpose. This payload is sent on every profile edit, so
  * carrying the flag would reset it each time; without it an insert takes the column's default
  * (false) and an update leaves the stored value alone. Only
- * [ProfileRepository.markOnboardingComplete] writes it.
+ * [ProfileRepository.markOnboardingComplete] writes it. The privacy columns are left out for the
+ * same reason; [ProfileRepository.updatePrivacy] and [ProfileRepository.updatePrivateMode] write them.
  */
 @Serializable
 data class ProfileUpsert(
@@ -58,6 +68,8 @@ fun ProfileRow.toProfile(): Profile = Profile(
     isPublic = isPublic,
     avatarUrl = avatarUrl,
     cardImageUrl = cardImageUrl,
+    privateMode = privateMode,
+    privacy = ProfilePrivacy(showPhoto, showBio, showPreferences, showBoundaries, showStatus),
 )
 
 /** Parse the stored status string back into the enum, defaulting to GREEN on bad data. */

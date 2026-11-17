@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.model.ReactionState
 import com.example.unspokenqueues.data.AnnouncementRepository
@@ -195,6 +196,7 @@ class EventAnnouncementsTest {
     }
 
     @Test fun publicOutsiderCannotSeeSection() {
+        var waveLoads = 0
         val announcements = FakeAnnouncements()
         val events = object : EventRepository() {
             override suspend fun eventAttendees(eventId: String): List<Attendee> = emptyList()
@@ -203,13 +205,18 @@ class EventAnnouncementsTest {
         }
         compose.setContent {
             UnspokenQueuesTheme {
-                EventDetailScreen(events, "outsider", CueStatus.GREEN, event.copy(isPublic = true), {}, {}, {}, announcements,
+                EventDetailScreen(events, SafetyRepository(), "outsider", CueStatus.GREEN, event.copy(isPublic = true), {}, {}, {}, announcements,
                     reactionRepository = object : ReactionRepository() {
-                        override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
+                        override suspend fun state(eventId: String): ReactionState {
+                            waveLoads++
+                            return ReactionState(false, false, emptyList(), emptyList())
+                        }
                     })
             }
         }
         compose.onNodeWithText("Announcements").assertDoesNotExist()
+        compose.onNodeWithText("Waves").assertDoesNotExist()
         assertEquals(0, announcements.loads)
+        assertEquals(0, waveLoads)
     }
 }
