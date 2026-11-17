@@ -19,6 +19,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
+import com.example.unspokenqueues.data.ReactionRepository
+import com.example.unspokenqueues.model.ReactionState
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
@@ -137,6 +139,9 @@ class EventsScreenTest {
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
+                        reactionRepository = object : ReactionRepository() {
+                            override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
+                        },
                     )
                 }
             }

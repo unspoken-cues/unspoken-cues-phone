@@ -74,6 +74,8 @@ import coil3.compose.AsyncImage
 import com.example.unspokenqueues.R
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
+import com.example.unspokenqueues.data.ReactionRepository
+import com.example.unspokenqueues.ui.components.EventReactionsSection
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
@@ -803,6 +805,8 @@ fun EventDetailScreen(
     onEventChange: (Event) -> Unit,
     onRemoved: () -> Unit,
     onBack: () -> Unit,
+    reactionRepository: ReactionRepository = remember { ReactionRepository() },
+    isProfilePublic: Boolean = false,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -1048,6 +1052,8 @@ fun EventDetailScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        EventReactionsSection(reactionRepository, event, userId, status, isProfilePublic)
 
         actionError?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)

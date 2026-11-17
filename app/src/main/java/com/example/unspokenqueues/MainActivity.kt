@@ -696,6 +696,7 @@ fun UnspokenCuesApp(
                             onEventChange = { openEvent = it },
                             onRemoved = { openEvent = null },
                             onBack = { openEvent = null },
+                            isProfilePublic = profile.isPublic,
                         )
                     }
                 }
