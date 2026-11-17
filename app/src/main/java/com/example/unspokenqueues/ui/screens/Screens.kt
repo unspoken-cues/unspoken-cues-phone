@@ -624,7 +624,7 @@ fun EditProfileScreen(
     status: CueStatus,
     onUploadAvatar: suspend (Uri) -> String,
     onUploadCardImage: suspend (Uri) -> String,
-    onSave: (Profile) -> Unit,
+    onSave: suspend (Profile) -> Unit,
     onCancel: () -> Unit,
 ) {
     var name by remember { mutableStateOf(initial.displayName) }
@@ -643,17 +643,20 @@ fun EditProfileScreen(
     val keptLocalCard = initial.localCardImage.takeIf { cardImageUrl.isNotBlank() && cardImageUrl == initial.cardImageUrl }
     var pickedCard by rememberSaveable { mutableStateOf<Uri?>(null) }
     var saving by remember { mutableStateOf(false) }
-    var photoError by remember { mutableStateOf<String?>(null) }
+    // A photo problem or a failed save, shown under the photo.
+    var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     fun save() {
         if (saving) return
         saving = true
-        photoError = null
+        error = null
         scope.launch {
+            var failure = "Couldn't upload your pictures. Check your connection and try again."
             try {
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
                 val cardUrl = pickedCard?.let { onUploadCardImage(it) } ?: cardImageUrl
+                failure = "Couldn't save your profile. Check your connection and try again."
                 onSave(
                     Profile(
                         name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal,
@@ -663,7 +666,7 @@ fun EditProfileScreen(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                photoError = "Couldn't upload your pictures. Check your connection and try again."
+                error = failure
             } finally {
                 saving = false
             }
@@ -692,9 +695,9 @@ fun EditProfileScreen(
                     pickedPhoto = null
                     avatarUrl = ""
                 },
-                onError = { photoError = it },
+                onError = { error = it },
             )
-            photoError?.let {
+            error?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
@@ -716,7 +719,7 @@ fun EditProfileScreen(
                         pickedCard = null
                         cardImageUrl = ""
                     },
-                    onError = { photoError = it },
+                    onError = { error = it },
                     size = 112,
                     noun = "card image",
                     halo = status,
