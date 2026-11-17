@@ -725,6 +725,7 @@ fun UnspokenCuesApp(
                             onEventChange = { openEvent = it },
                             onRemoved = { openEvent = null },
                             onBack = { openEvent = null },
+                            profileVisibleForWaves = profile.isPublic && !profile.privateMode && profile.privacy.showStatus,
                         )
                     }
                 }

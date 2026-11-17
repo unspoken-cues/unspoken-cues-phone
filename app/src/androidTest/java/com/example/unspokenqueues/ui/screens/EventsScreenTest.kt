@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -23,6 +24,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.ReactionRepository
+import com.example.unspokenqueues.model.Reaction
+import com.example.unspokenqueues.model.ReactionState
+import com.example.unspokenqueues.model.WaveRecipient
 import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.model.Announcement
@@ -141,16 +146,25 @@ class EventsScreenTest {
         compose.waitUntil(timeoutMillis = 5_000) { hostEventButton().isDisplayed() }
     }
 
-    private fun showDetail(repo: EventRepository, userId: String, event: Event = mixer) {
+    private fun showDetail(
+        repo: EventRepository,
+        userId: String,
+        event: Event = mixer,
+        safety: SafetyRepository = SafetyRepository(),
+        waves: ReactionRepository = object : ReactionRepository() {
+            override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
+        },
+    ) {
         compose.setContent {
             UnspokenQueuesTheme {
                 CompositionLocalProvider(LocalClipboard provides clipboard) {
                     EventDetailScreen(
-                        // Blocking and reporting aren't exercised here; nothing reaches the server.
-                        repo, object : SafetyRepository() {}, userId, CueStatus.GREEN, event,
+                        repo, safety, userId, CueStatus.GREEN, event,
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
+                        profileVisibleForWaves = true,
+                        reactionRepository = waves,
                         announcementRepo = object : AnnouncementRepository() {
                             override suspend fun announcements(eventId: String): List<Announcement> = emptyList()
                         },
@@ -248,6 +262,36 @@ class EventsScreenTest {
         compose.onNodeWithText("Gia Green").assertIsDisplayed()
         compose.onNodeWithText("Yan Yellow").assertIsDisplayed()
         compose.onNodeWithText("Attendees · 2").assertIsDisplayed()
+    }
+
+    @Test
+    fun blockingAnAttendeeRemovesTheirWavesWithoutManualRefresh() {
+        val person = everyone.first()
+        var blockedId: String? = null
+        val safety = object : SafetyRepository() {
+            override suspend fun block(otherUserId: String) { blockedId = otherUserId }
+        }
+        val waves = object : ReactionRepository() {
+            override suspend fun state(eventId: String): ReactionState {
+                if (blockedId == person.userId) return ReactionState(true, true, emptyList(), emptyList())
+                return ReactionState(
+                    true, true,
+                    listOf(WaveRecipient(person.userId, person.name, false)),
+                    listOf(Reaction(person.userId, person.name, java.time.Instant.now())),
+                )
+            }
+        }
+        showDetail(FakeEventRepository(attendees = listOf(person)), "host", safety = safety, waves = waves)
+        val target = compose.onNodeWithContentDescription("Wave to ${person.name}")
+        val history = compose.onNodeWithText("${person.name} waved")
+        target.performScrollTo().assertIsDisplayed()
+        history.performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("More options for ${person.name}").performScrollTo().performClick()
+        compose.onNodeWithText("Block").performClick()
+        compose.onNodeWithText("Block").performClick()
+        compose.runOnIdle { assertEquals(person.userId, blockedId) }
+        target.assertDoesNotExist()
+        history.assertDoesNotExist()
     }
 
     @Test

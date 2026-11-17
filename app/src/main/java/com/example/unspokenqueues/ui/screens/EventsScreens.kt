@@ -78,6 +78,8 @@ import com.example.unspokenqueues.R
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.ReactionRepository
+import com.example.unspokenqueues.ui.components.EventReactionsSection
 import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.ui.components.ReportDialog
 import com.example.unspokenqueues.data.AnnouncementRepository
@@ -812,15 +814,21 @@ fun EventDetailScreen(
     onRemoved: () -> Unit,
     onBack: () -> Unit,
     announcementRepo: AnnouncementRepository? = null,
+    reactionRepository: ReactionRepository = remember { ReactionRepository() },
+    profileVisibleForWaves: Boolean = false,
 ) {
     key(event.id, userId) {
-        EventDetailContent(repo, userId, status, event, onEventChange, onRemoved, onBack, announcementRepo)
+        EventDetailContent(
+            repo, safety, userId, status, event, onEventChange, onRemoved, onBack,
+            announcementRepo, reactionRepository, profileVisibleForWaves,
+        )
     }
 }
 
 @Composable
 private fun EventDetailContent(
     repo: EventRepository,
+    safety: SafetyRepository,
     userId: String,
     status: CueStatus,
     event: Event,
@@ -828,6 +836,8 @@ private fun EventDetailContent(
     onRemoved: () -> Unit,
     onBack: () -> Unit,
     announcementRepo: AnnouncementRepository?,
+    reactionRepository: ReactionRepository,
+    profileVisibleForWaves: Boolean,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -845,6 +855,7 @@ private fun EventDetailContent(
     var copied by remember { mutableStateOf(false) }
     var confirmingEnd by remember { mutableStateOf(false) }
     var confirmingRemove by remember { mutableStateOf(false) }
+    var waveRefreshAfterBlock by remember { mutableIntStateOf(0) }
     var blocking by remember { mutableStateOf<Attendee?>(null) }
     var reporting by remember { mutableStateOf<Attendee?>(null) }
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
@@ -912,6 +923,7 @@ private fun EventDetailContent(
     // Blocking hides each person from the other, so they leave this list too.
     fun block(person: Attendee) = perform("Couldn't block ${person.name}. Check your connection and try again.") {
         safety.block(person.userId)
+        waveRefreshAfterBlock++
         attendees = attendees?.filter { it.userId != person.userId }
     }
 
@@ -1093,6 +1105,9 @@ private fun EventDetailContent(
 
         if (isHost || (membershipLoaded && rsvp != null)) {
             EventAnnouncements(event, userId, announcements)
+            key(waveRefreshAfterBlock) {
+                EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+            }
         }
 
         actionError?.let {
