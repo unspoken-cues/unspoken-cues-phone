@@ -1,7 +1,9 @@
 package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.Attendee
+import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -65,18 +67,25 @@ fun String?.toInstantOrNull(): Instant? =
 fun List<EventMemberRow>.toRsvps(): Map<String, Rsvp> =
     mapNotNull { row -> Rsvp.fromWire(row.rsvp)?.let { row.eventId to it } }.toMap()
 
-/** An event member's profile row as an attendee; the profile row's id is the member's user id. */
-fun ProfileRow.toAttendee(): Attendee = Attendee(
-    userId = id,
-    profile = toProfile(),
-    status = toCueStatus(),
+/**
+ * One row of `event_attendees()`: an attendee as the viewer may see them. Fields they hide arrive
+ * blank, and status arrives null when they hide their cue color.
+ */
+@Serializable
+data class AttendeeRow(
+    @SerialName("user_id") val userId: String,
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("avatar_url") val avatarUrl: String = "",
+    val bio: String = "",
+    val preferences: List<String> = emptyList(),
+    val boundaries: List<String> = emptyList(),
+    val status: String? = null,
 )
 
-/**
- * Joins membership rows to the members' profiles, keeping the order people joined in.
- * Members whose profile could not be read (e.g. hidden by Row Level Security) are skipped.
- */
-fun List<EventMemberRow>.toAttendees(profiles: List<ProfileRow>): List<Attendee> {
-    val byId = profiles.associateBy { it.id }
-    return mapNotNull { byId[it.userId]?.toAttendee() }
-}
+/** An attendee row as an attendee. A status the app doesn't know reads as hidden. */
+fun AttendeeRow.toAttendee(): Attendee = Attendee(
+    userId = userId,
+    // isPublic isn't sent: someone else's visibility setting is none of the viewer's business.
+    profile = Profile(displayName, bio, preferences, boundaries, isPublic = false, avatarUrl = avatarUrl),
+    status = CueStatus.entries.firstOrNull { it.name == status },
+)

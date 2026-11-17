@@ -46,6 +46,10 @@ data class Profile(
     val cardImageUrl: String = "",
     // The on-device copy of [cardImageUrl], shown at once after an upload. Never saved.
     val localCardImage: Any? = null,
+    // Hides the profile from everyone, swap partners included, and pauses swaps both ways.
+    val privateMode: Boolean = false,
+    // Which fields people the user hasn't swapped with may see.
+    val privacy: ProfilePrivacy = ProfilePrivacy(),
 ) {
     /** What to show as the profile photo: the local copy if there is one, else the URL, else null. */
     val avatarImage: Any? get() = localAvatar ?: avatarUrl.takeIf { it.isNotBlank() }
@@ -57,8 +61,22 @@ data class Profile(
     val cardPicture: Any? get() = cardImage ?: avatarImage
 }
 
-// Someone who has joined an event. userId is their account id.
-data class Attendee(val userId: String, val profile: Profile, val status: CueStatus) {
+/**
+ * Which profile fields people the user hasn't swapped with may see. Off hides the field from
+ * everyone but active swap partners; the name always shows. [showPhoto] covers the profile photo
+ * and the card image. The server enforces these, so a hidden field arrives blank.
+ */
+data class ProfilePrivacy(
+    val showPhoto: Boolean = true,
+    val showBio: Boolean = true,
+    val showPreferences: Boolean = true,
+    val showBoundaries: Boolean = true,
+    val showStatus: Boolean = true,
+)
+
+// Someone who has joined an event. userId is their account id. status is null when they hide
+// their cue color from the viewer. The server leaves out anyone the viewer may not see.
+data class Attendee(val userId: String, val profile: Profile, val status: CueStatus?) {
     val name get() = profile.displayName
 }
 
@@ -92,20 +110,6 @@ enum class Rsvp(val wire: String, val label: String) {
     }
 }
 
-// Statuses an attendee is willing to show other attendees. Red and purple stay private to the host.
-private val statusesVisibleToAttendees = setOf(CueStatus.GREEN, CueStatus.YELLOW)
-
-/**
- * The attendees [viewerId] may see at an event hosted by [hostId]. The host sees everyone; any
- * other viewer sees only people who are green or yellow, plus themselves whatever their status.
- */
-fun visibleAttendees(viewerId: String, hostId: String, attendees: List<Attendee>): List<Attendee> =
-    if (viewerId == hostId) {
-        attendees
-    } else {
-        attendees.filter { it.userId == viewerId || it.status in statusesVisibleToAttendees }
-    }
-
 const val JOIN_CODE_MIN_LENGTH = 4
 const val JOIN_CODE_MAX_LENGTH = 8
 
@@ -133,9 +137,27 @@ fun isValidJoinCode(code: String): Boolean {
 }
 
 // A card in the binder. userId is the other person's account id, used to remove the swap.
-data class CollectedCard(val userId: String, val profile: Profile, val status: CueStatus) {
+// expiresAt is when a temporary swap ends; null means it is kept.
+data class CollectedCard(
+    val userId: String,
+    val profile: Profile,
+    val status: CueStatus,
+    val expiresAt: Instant? = null,
+) {
     val name get() = profile.displayName
 }
+
+/** Why someone reports another user. [wire] is the value the `reports.reason` column accepts. */
+enum class ReportReason(val wire: String, val label: String) {
+    HARASSMENT("harassment", "Harassment"),
+    UNSAFE("unsafe", "Made me feel unsafe"),
+    SPAM("spam", "Spam"),
+    FAKE("fake", "Fake profile"),
+    OTHER("other", "Something else"),
+}
+
+/** Someone the signed-in user has blocked, as listed for unblocking. */
+data class BlockedUser(val userId: String, val name: String)
 
 /** How an attempt to collect someone's card from a scan or a link ended. */
 sealed interface SwapResult {

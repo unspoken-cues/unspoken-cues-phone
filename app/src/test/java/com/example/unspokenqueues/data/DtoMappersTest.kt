@@ -3,8 +3,10 @@ package com.example.unspokenqueues.data
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.ProfilePrivacy
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class DtoMappersTest {
@@ -119,19 +121,73 @@ class DtoMappersTest {
         assertEquals(EventMemberRow("e1", "u1", "2026-10-07T20:00:00Z"), row)
     }
 
+    // ---------- AttendeeRow ----------
+
     @Test
-    fun profileRow_toAttendee_usesRowIdAsUserId() {
-        val attendee = ProfileRow(id = "u1", displayName = "Sam", status = "PURPLE", avatarUrl = "https://x.test/a.jpg").toAttendee()
+    fun attendeeRpcReply_decodesToAnAttendee() {
+        val row = json.decodeFromString<AttendeeRow>(
+            """{"user_id":"u1","display_name":"Sam","avatar_url":"https://x.test/a.jpg","bio":"hi",
+               "preferences":["Text first"],"boundaries":["No hugs"],"status":"PURPLE"}""",
+        )
+        val attendee = row.toAttendee()
         assertEquals("u1", attendee.userId)
         assertEquals("Sam", attendee.name)
         assertEquals(CueStatus.PURPLE, attendee.status)
         assertEquals("https://x.test/a.jpg", attendee.profile.avatarUrl)
+        assertEquals("hi", attendee.profile.bio)
+        assertEquals(listOf("Text first"), attendee.profile.preferences)
+        assertEquals(listOf("No hugs"), attendee.profile.boundaries)
     }
 
     @Test
-    fun toAttendees_keepsMemberOrder_andSkipsMembersWithoutAReadableProfile() {
-        val members = listOf(EventMemberRow("e1", "u2"), EventMemberRow("e1", "hidden"), EventMemberRow("e1", "u1"))
-        val profiles = listOf(ProfileRow(id = "u1", displayName = "Ana"), ProfileRow(id = "u2", displayName = "Ben"))
-        assertEquals(listOf("u2", "u1"), members.toAttendees(profiles).map { it.userId })
+    fun attendeeRow_withHiddenFields_mapsToBlanksAndNoStatus() {
+        // What the server sends for someone who hides everything but their name.
+        val row = json.decodeFromString<AttendeeRow>(
+            """{"user_id":"u1","display_name":"Sam","avatar_url":"","bio":"","preferences":[],"boundaries":[],"status":null}""",
+        )
+        val attendee = row.toAttendee()
+        assertEquals("Sam", attendee.name)
+        assertNull(attendee.status)
+        assertNull(attendee.profile.avatarImage)
+        assertEquals("", attendee.profile.bio)
+        assertEquals(emptyList<String>(), attendee.profile.preferences)
+    }
+
+    @Test
+    fun attendeeRow_withUnknownStatus_readsAsHidden() {
+        assertNull(AttendeeRow(userId = "u1", status = "BLUE").toAttendee().status)
+    }
+
+    // ---------- privacy ----------
+
+    @Test
+    fun profileRow_toProfile_carriesPrivateModeAndPrivacy() {
+        val row = json.decodeFromString<ProfileRow>(
+            """{"id":"u1","private_mode":true,"show_photo":false,"show_bio":true,"show_preferences":false,
+               "show_boundaries":true,"show_status":false}""",
+        )
+        val profile = row.toProfile()
+        assertEquals(true, profile.privateMode)
+        assertEquals(
+            ProfilePrivacy(showPhoto = false, showBio = true, showPreferences = false, showBoundaries = true, showStatus = false),
+            profile.privacy,
+        )
+    }
+
+    @Test
+    fun profileRow_withoutPrivacyColumns_isNotPrivate_andShowsEverything() {
+        // A database that hasn't had section 16 applied yet.
+        val profile = json.decodeFromString<ProfileRow>("""{"id":"u1","display_name":"Sam"}""").toProfile()
+        assertEquals(false, profile.privateMode)
+        assertEquals(ProfilePrivacy(), profile.privacy)
+    }
+
+    @Test
+    fun profileUpsert_neverWritesPrivacyOrPrivateMode() {
+        // Saving a profile must not reset privacy settings, so the payload may not carry them.
+        val strict = Json { encodeDefaults = true }
+        val profile = Profile("Sam", "", emptyList(), emptyList(), true, privateMode = true, privacy = ProfilePrivacy(showBio = false))
+        val encoded = strict.encodeToString(ProfileUpsert.serializer(), profile.toUpsert("u1", CueStatus.GREEN))
+        assert(!encoded.contains("private_mode") && !encoded.contains("show_")) { encoded }
     }
 }

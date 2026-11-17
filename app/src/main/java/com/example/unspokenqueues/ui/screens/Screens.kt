@@ -46,6 +46,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -123,7 +125,6 @@ import com.example.unspokenqueues.model.ThemeMode
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.model.cardTokenFrom
 import com.example.unspokenqueues.model.isValidJoinCode
-import com.example.unspokenqueues.model.visibleAttendees
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
@@ -145,7 +146,15 @@ import com.example.unspokenqueues.ui.theme.EaseOutQuart
 import com.example.unspokenqueues.ui.theme.MotionLong
 import com.example.unspokenqueues.ui.theme.MotionMedium
 import com.example.unspokenqueues.ui.theme.MotionShort
+import com.example.unspokenqueues.model.ProfilePrivacy
+import com.example.unspokenqueues.model.ReportReason
+import com.example.unspokenqueues.model.BlockedUser
+import com.example.unspokenqueues.data.SafetyRepository
+import com.example.unspokenqueues.ui.components.ReportDialog
+import com.example.unspokenqueues.model.formatWhen
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.math.hypot
 
 @Composable
@@ -397,12 +406,13 @@ fun AccountLoadingScreen(failed: Boolean, onRetry: () -> Unit, onSignOut: () -> 
 // ---------- 2. Cue (status) ----------
 
 @Composable
-fun CueScreen(status: CueStatus, watch: WatchConnection, onStatusChange: (CueStatus) -> Unit) {
+fun CueScreen(status: CueStatus, watch: WatchConnection, privateMode: Boolean = false, onStatusChange: (CueStatus) -> Unit) {
     ScreenColumn {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("My Cue", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             WatchPill(watch)
         }
+        if (privateMode) Chip("Private Mode on")
 
         CueHero(status)
 
@@ -535,6 +545,8 @@ fun ProfileScreen(
     profile: Profile,
     onEdit: () -> Unit,
     onVisibilityChange: (Boolean) -> Unit,
+    onPrivateModeChange: (Boolean) -> Unit,
+    onPrivacyChange: (ProfilePrivacy) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val p = profile
@@ -559,7 +571,19 @@ fun ProfileScreen(
         SectionCard(title = "Preferences") { ChipsOrEmpty(p.preferences, "No preferences yet") }
         SectionCard(title = "Boundaries") { ChipsOrEmpty(p.boundaries, "No boundaries yet") }
         SectionCard(title = "Privacy") {
-            ToggleRow("Public profile", "Anyone who scans your QR can view it", p.isPublic, onVisibilityChange)
+            ToggleRow(
+                "Private Mode", "Hides your profile from everyone, including people you swapped with, and pauses swaps",
+                p.privateMode, onPrivateModeChange,
+            )
+            ToggleRow("Public profile", "People at your events can see your profile", p.isPublic, onVisibilityChange)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Text("Shown to people you haven't swapped with", style = MaterialTheme.typography.titleSmall)
+            val v = p.privacy
+            ToggleRow("Photo", "Your profile photo and card image", v.showPhoto) { onPrivacyChange(v.copy(showPhoto = it)) }
+            ToggleRow("Bio", null, v.showBio) { onPrivacyChange(v.copy(showBio = it)) }
+            ToggleRow("Preferences", null, v.showPreferences) { onPrivacyChange(v.copy(showPreferences = it)) }
+            ToggleRow("Boundaries", null, v.showBoundaries) { onPrivacyChange(v.copy(showBoundaries = it)) }
+            ToggleRow("Cue color", null, v.showStatus) { onPrivacyChange(v.copy(showStatus = it)) }
         }
     }
 }
@@ -657,9 +681,11 @@ fun EditProfileScreen(
                 val url = pickedPhoto?.let { onUploadAvatar(it) } ?: avatarUrl
                 val cardUrl = pickedCard?.let { onUploadCardImage(it) } ?: cardImageUrl
                 failure = "Couldn't save your profile. Check your connection and try again."
+                // A copy, so Private Mode and the privacy toggles (not edited here) stay as they are.
                 onSave(
-                    Profile(
-                        name.trim(), bio.trim(), preferences, boundaries, isPublic, url, pickedPhoto ?: keptLocal,
+                    initial.copy(
+                        displayName = name.trim(), bio = bio.trim(), preferences = preferences, boundaries = boundaries,
+                        isPublic = isPublic, avatarUrl = url, localAvatar = pickedPhoto ?: keptLocal,
                         cardImageUrl = cardUrl, localCardImage = pickedCard ?: keptLocalCard,
                     ),
                 )
@@ -752,7 +778,7 @@ fun EditProfileScreen(
         EditableListCard("Boundaries", "e.g. No photos", boundaries) { boundaries = it }
 
         SectionCard(title = "Privacy") {
-            ToggleRow("Public profile", "Anyone who scans your QR can view it", isPublic) { isPublic = it }
+            ToggleRow("Public profile", "People at your events can see your profile", isPublic) { isPublic = it }
         }
     }
 }
@@ -915,11 +941,20 @@ fun QrScreen(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button({ sharing = true }, Modifier.weight(1f).height(52.dp), enabled = cardLink != null) { Text("Share") }
-            OutlinedButton({ scanning = true }, Modifier.weight(1f).height(52.dp)) { Text("Scan a code") }
+        // The server refuses swaps in Private Mode; this says so before anyone tries.
+        val canSwap = !profile.privateMode
+        if (!canSwap) {
+            Text(
+                "Private Mode is on. Swaps are paused.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        TextButton({ enteringLink = true }, Modifier.fillMaxWidth()) { Text("Enter a link instead") }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button({ sharing = true }, Modifier.weight(1f).height(52.dp), enabled = cardLink != null && canSwap) { Text("Share") }
+            OutlinedButton({ scanning = true }, Modifier.weight(1f).height(52.dp), enabled = canSwap) { Text("Scan a code") }
+        }
+        TextButton({ enteringLink = true }, Modifier.fillMaxWidth(), enabled = canSwap) { Text("Enter a link instead") }
     }
     if (cardLink != null) {
         if (qrExpanded) {
@@ -986,11 +1021,19 @@ fun ConfirmLinkSwapDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     )
 }
 
-/** Tells the user how collecting a card ended. */
+/**
+ * Tells the user how collecting a card ended. After a swap the user can keep it (dismiss) or make
+ * it temporary with [onMakeTemporary], which returns when the swap ends and throws if it failed.
+ */
 @Composable
-fun SwapResultDialog(result: SwapResult, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
+fun SwapResultDialog(
+    result: SwapResult,
+    onViewBinder: () -> Unit,
+    onDismiss: () -> Unit,
+    onMakeTemporary: suspend () -> Instant,
+) {
     when (result) {
-        is SwapResult.Swapped -> SwapReveal(result.card, onViewBinder, onDismiss)
+        is SwapResult.Swapped -> SwapReveal(result.card, onViewBinder, onDismiss, onMakeTemporary)
         is SwapResult.Failed -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Couldn't swap cards") },
@@ -1008,8 +1051,33 @@ private val RevealScrim = Color(0xE60E0F13)
  * and then the ways out appear.
  */
 @Composable
-private fun SwapReveal(card: CollectedCard, onViewBinder: () -> Unit, onDismiss: () -> Unit) {
+private fun SwapReveal(
+    card: CollectedCard,
+    onViewBinder: () -> Unit,
+    onDismiss: () -> Unit,
+    onMakeTemporary: suspend () -> Instant,
+) {
     val whose = card.name.takeIf { it.isNotBlank() }?.let { "$it's" } ?: "Their"
+    var endsAt by remember { mutableStateOf<Instant?>(null) }
+    var makingTemporary by remember { mutableStateOf(false) }
+    var temporaryError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun makeTemporary() {
+        if (makingTemporary) return
+        makingTemporary = true
+        temporaryError = null
+        scope.launch {
+            try {
+                endsAt = onMakeTemporary()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                temporaryError = "Couldn't make this swap temporary. Check your connection and try again."
+            } finally {
+                makingTemporary = false
+            }
+        }
+    }
     val rise = remember { Animatable(1f) }
     val turn = remember { Animatable(180f) }
     val controls = remember { Animatable(0f) }
@@ -1062,7 +1130,27 @@ private fun SwapReveal(card: CollectedCard, onViewBinder: () -> Unit, onDismiss:
                     textAlign = TextAlign.Center,
                 )
                 Button(onViewBinder, Modifier.fillMaxWidth().height(52.dp)) { Text("View binder") }
-                TextButton(onDismiss, Modifier.fillMaxWidth()) { Text("Done", color = Color.White) }
+                val ends = endsAt
+                if (ends != null) {
+                    Text(
+                        "This swap ends ${formatWhen(ends, Instant.now(), ZoneId.systemDefault())}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.9f),
+                        textAlign = TextAlign.Center,
+                    )
+                    TextButton(onDismiss, Modifier.fillMaxWidth()) { Text("Done", color = Color.White) }
+                } else {
+                    temporaryError?.let {
+                        // Light red: the theme's error color is too dark to read on the scrim.
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFFFB4AB), textAlign = TextAlign.Center)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TextButton(::makeTemporary, Modifier.weight(1f), enabled = !makingTemporary) {
+                            Text(if (makingTemporary) "Making temporary…" else "Make temporary", color = Color.White)
+                        }
+                        TextButton(onDismiss, Modifier.weight(1f), enabled = !makingTemporary) { Text("Keep", color = Color.White) }
+                    }
+                }
             }
         }
     }
@@ -1127,10 +1215,38 @@ private fun ShareCardSheet(name: String, link: String, onDismiss: () -> Unit) {
 
 // ---------- 5. S.W.A.P. / Binder ----------
 
-// Full-screen view of someone else's card (collected or at an event) with all their preferences and boundaries.
+/**
+ * Full-screen view of someone else's card (collected or at an event) with all their preferences
+ * and boundaries. [endsAt] is when a temporary swap ends. [onReport] files a report and throws if
+ * that failed; the Remove, Block and Report actions only show when their callbacks are given.
+ */
 @Composable
-internal fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> Unit)? = null, onClose: () -> Unit) {
+internal fun PersonDetail(
+    profile: Profile,
+    status: CueStatus,
+    endsAt: Instant? = null,
+    onRemove: (() -> Unit)? = null,
+    onBlock: (() -> Unit)? = null,
+    onReport: (suspend (ReportReason, String) -> Unit)? = null,
+    onClose: () -> Unit,
+) {
     var confirmingRemove by remember { mutableStateOf(false) }
+    var confirmingBlock by remember { mutableStateOf(false) }
+    var reporting by remember { mutableStateOf(false) }
+    if (confirmingBlock && onBlock != null) {
+        ConfirmBlockDialog(profile.displayName, onConfirm = onBlock, onDismiss = { confirmingBlock = false })
+    }
+    if (reporting && onReport != null) {
+        ReportDialog(
+            profile.displayName,
+            onSend = onReport,
+            onSent = { alsoBlock ->
+                reporting = false
+                if (alsoBlock) onBlock?.invoke()
+            },
+            onDismiss = { reporting = false },
+        )
+    }
     if (confirmingRemove && onRemove != null) {
         AlertDialog(
             onDismissRequest = { confirmingRemove = false },
@@ -1157,6 +1273,13 @@ internal fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> 
                     TextButton(onClose) { Text("Close") }
                 }
                 SwapCard(profile, status)
+                endsAt?.let {
+                    Text(
+                        "Temporary swap. Ends ${formatWhen(it, Instant.now(), ZoneId.systemDefault())}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 SectionCard(title = "Preferences") { ChipsOrEmpty(profile.preferences, "No preferences shared") }
                 SectionCard(title = "Boundaries") { ChipsOrEmpty(profile.boundaries, "No boundaries shared") }
                 if (onRemove != null) {
@@ -1164,15 +1287,108 @@ internal fun PersonDetail(profile: Profile, status: CueStatus, onRemove: (() -> 
                         Text("Remove from binder", color = MaterialTheme.colorScheme.error)
                     }
                 }
+                if (onBlock != null) {
+                    TextButton({ confirmingBlock = true }, Modifier.fillMaxWidth()) {
+                        Text("Block ${profile.displayName}", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                if (onReport != null) {
+                    TextButton({ reporting = true }, Modifier.fillMaxWidth()) {
+                        Text("Report ${profile.displayName}", color = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
         }
     }
+}
+
+/** The people this user has blocked, each with a way to unblock them. */
+@Composable
+private fun BlockedPeopleCard(safety: SafetyRepository) {
+    // Null until the first load answers.
+    var blocked by remember { mutableStateOf<List<BlockedUser>?>(null) }
+    var loadFailed by remember { mutableStateOf(false) }
+    // Bumped by "Try again" to load the list again.
+    var reload by remember { mutableIntStateOf(0) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(reload) {
+        loadFailed = false
+        try {
+            blocked = safety.blockedUsers()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+        }
+    }
+    fun unblock(person: BlockedUser) {
+        val list = blocked ?: return
+        val index = list.indexOf(person)
+        blocked = list - person
+        error = null
+        scope.launch {
+            try {
+                safety.unblock(person.userId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Back where it was, unless it is somehow there already.
+                blocked = blocked?.let { if (person in it) it else it.toMutableList().apply { add(index.coerceAtMost(size), person) } }
+                error = "Couldn't unblock ${person.name}. Check your connection and try again."
+            }
+        }
+    }
+    SectionCard(title = "Blocked people") {
+        val list = blocked
+        when {
+            loadFailed && list == null -> {
+                Text(
+                    "Couldn't load the people you've blocked. Check your connection and try again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                OutlinedButton({ reload++ }, Modifier.fillMaxWidth()) { Text("Try again") }
+            }
+            list == null -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+            list.isEmpty() -> Text(
+                "You haven't blocked anyone.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> list.forEach { person ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(person.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                    OutlinedButton({ unblock(person) }) { Text("Unblock") }
+                }
+            }
+        }
+        error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    }
+}
+
+/** Asks before blocking [name], since a block also ends the swap. */
+@Composable
+internal fun ConfirmBlockDialog(name: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Block $name?") },
+        text = { Text("You'll be removed from each other's binders and they won't be able to swap with you.") },
+        confirmButton = {
+            TextButton({
+                onDismiss()
+                onConfirm()
+            }) { Text("Block", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
 }
 
 // ---------- 6. Settings / Pairing ----------
 
 @Composable
 fun SettingsScreen(
+    safety: SafetyRepository,
     watch: WatchConnection,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
@@ -1222,6 +1438,7 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        BlockedPeopleCard(safety)
         SectionCard(title = "App") {
             Column {
                 Text("Tutorial", style = MaterialTheme.typography.bodyLarge)
@@ -1241,13 +1458,17 @@ fun SettingsScreen(
     }
 }
 
+// The whole row toggles, so the switch is announced with its title and is easy to hit.
 @Composable
-internal fun ToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+internal fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        Switch(checked, onChange)
+        Switch(checked, onCheckedChange = null)
     }
 }

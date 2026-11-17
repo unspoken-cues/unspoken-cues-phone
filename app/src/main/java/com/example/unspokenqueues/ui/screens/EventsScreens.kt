@@ -96,7 +96,6 @@ import com.example.unspokenqueues.model.phase
 import com.example.unspokenqueues.model.tagLabel
 import com.example.unspokenqueues.model.tagsOf
 import com.example.unspokenqueues.model.upcomingEvents
-import com.example.unspokenqueues.model.visibleAttendees
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Chip
@@ -1002,11 +1001,10 @@ fun EventDetailScreen(
             }
         }
 
-        // The rule lives in visibleAttendees: the host sees everyone, others only green and yellow.
-        val visible = attendees?.let { visibleAttendees(userId, event.hostId, it) }
+        // The server applies the rule: the host sees everyone, others only green and yellow.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (visible == null) "Attendees" else "Attendees · ${visible.size}",
+                attendees?.let { "Attendees · ${it.size}" } ?: "Attendees",
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -1020,7 +1018,7 @@ fun EventDetailScreen(
             )
         }
         AnimatedContent(
-            targetState = visible,
+            targetState = attendees,
             transitionSpec = { fadeIn(tween(MotionMedium, easing = EaseOutQuart)) togetherWith fadeOut(tween(MotionShort)) },
             // Only loading → loaded fades; a refresh updates the list in place.
             contentKey = { it == null },
@@ -1122,10 +1120,12 @@ private fun AttendeeRow(person: Attendee) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Halo(person.status) { Avatar(person.name, 40, person.profile.avatarUrl) }
+        // A null status means they hide their cue color: no ring and no label.
+        val status = person.status
+        if (status != null) Halo(status) { Avatar(person.name, 40, person.profile.avatarUrl) } else Avatar(person.name, 40, person.profile.avatarUrl)
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            StatusLabel(person.status)
+            status?.let { StatusLabel(it) }
         }
     }
 }

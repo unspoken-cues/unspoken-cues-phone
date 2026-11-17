@@ -223,24 +223,14 @@ class EventsScreenTest {
     // ---------- Event detail ----------
 
     @Test
-    fun detail_forAnAttendee_hidesRedAndPurple() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "green")
+    fun detail_forAnAttendee_showsWhoTheServerSends() {
+        // event_attendees() leaves out red and purple attendees for anyone but the host.
+        showDetail(FakeEventRepository(attendees = everyone.take(2)), userId = "green")
 
         compose.onNodeWithText("Design Mixer").assertIsDisplayed()
         compose.onNodeWithText("Gia Green").assertIsDisplayed()
         compose.onNodeWithText("Yan Yellow").assertIsDisplayed()
-        compose.onNodeWithText("Rae Red").assertDoesNotExist()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
         compose.onNodeWithText("Attendees · 2").assertIsDisplayed()
-    }
-
-    @Test
-    fun detail_forAnAttendeeWhoIsRed_stillShowsThemselves() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "red")
-
-        compose.onNodeWithText("Rae Red").assertIsDisplayed()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
-        compose.onNodeWithText("Attendees · 3").assertIsDisplayed()
     }
 
     @Test

@@ -121,20 +121,16 @@ open class EventRepository(
             .decodeList<EventRow>()
             .map { it.toEvent() }
 
-    /** Everyone who has joined the event, in the order they joined. */
-    open suspend fun eventAttendees(eventId: String): List<Attendee> {
-        val members = postgrest.from(MEMBERS)
-            .select {
-                filter { eq("event_id", eventId) }
-                order("joined_at", Order.ASCENDING)
-            }
-            .decodeList<EventMemberRow>()
-        if (members.isEmpty()) return emptyList()
-        val profiles = postgrest.from(PROFILES)
-            .select { filter { isIn("id", members.map { it.userId }) } }
-            .decodeList<ProfileRow>()
-        return members.toAttendees(profiles)
-    }
+    /**
+     * Everyone who has joined the event that the signed-in user may see, in the order they joined.
+     * The server applies the privacy rules: it leaves out people in Private Mode, blocks either
+     * way, and (unless the user hosts it) anyone whose cue is red or purple, and blanks the fields
+     * an attendee hides from people they haven't swapped with.
+     */
+    open suspend fun eventAttendees(eventId: String): List<Attendee> =
+        postgrest.rpc(ATTENDEES_RPC, buildJsonObject { put("p_event_id", eventId) })
+            .decodeList<AttendeeRow>()
+            .map { it.toAttendee() }
 
     /**
      * Joins the active event with this code as the signed-in user and returns it. Throws a
@@ -227,8 +223,8 @@ open class EventRepository(
     companion object {
         private const val EVENTS = "events"
         private const val MEMBERS = "event_members"
-        private const val PROFILES = "profiles"
         private const val JOIN_RPC = "join_event_by_code"
+        private const val ATTENDEES_RPC = "event_attendees"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.

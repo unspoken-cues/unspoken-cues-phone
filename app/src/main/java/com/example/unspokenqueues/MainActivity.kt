@@ -370,8 +370,8 @@ fun UnspokenCuesApp(
         if (!signedIn) {
             collection = emptyList()
         } else if (tab == Tab.BINDER || tab == Tab.CUE) {
-            val uid = authRepo.currentUserId() ?: return@LaunchedEffect
-            runCatching { swapRepo.loadBinder(uid) }.onSuccess { collection = it }
+            authRepo.currentUserId() ?: return@LaunchedEffect
+            runCatching { swapRepo.loadBinder() }.onSuccess { collection = it }
         }
     }
 

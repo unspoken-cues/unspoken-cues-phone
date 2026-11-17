@@ -73,8 +73,8 @@ create trigger on_auth_user_created
 
 -- ---------------------------------------------------------------------------
 -- 5. Row Level Security: a user may only read/write their own row.
---    Publicly visible profiles are additionally readable by anyone — this
---    supports the QR "public profile" view without exposing private rows.
+--    Other people's profiles are read only through binder_cards() and
+--    event_attendees() (section 16), which apply the privacy rules.
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
 
@@ -87,10 +87,6 @@ drop policy if exists "Owner can delete own profile"  on public.profiles;
 create policy "Owner can read own profile"
   on public.profiles for select
   using (auth.uid() = id);
-
-create policy "Public profiles are readable"
-  on public.profiles for select
-  using (is_public = true);
 
 create policy "Owner can insert own profile"
   on public.profiles for insert
@@ -139,17 +135,9 @@ create policy "Members can delete their swaps"
 -- No insert policy on purpose: creating a swap needs proof that the other person shared
 -- their card. swap_by_card_token() (section 12) checks that proof and inserts the row.
 
--- Swap partners can read each other's profile even when it is not public.
+-- Swap partners read each other's profile through binder_cards() (section 16), which
+-- also honors Private Mode and blocks. The old direct-read policy is removed.
 drop policy if exists "Swap partners can read each other" on public.profiles;
-create policy "Swap partners can read each other"
-  on public.profiles for select
-  using (
-    exists (
-      select 1 from public.swaps s
-      where (s.user_a = auth.uid() and s.user_b = profiles.id)
-         or (s.user_b = auth.uid() and s.user_a = profiles.id)
-    )
-  );
 
 -- ---------------------------------------------------------------------------
 -- 7. Profile photo: public URL of the user's image in the avatars bucket
@@ -392,9 +380,15 @@ revoke execute on function public.my_card_token() from public, anon;
 grant  execute on function public.my_card_token() to authenticated;
 
 -- Swaps cards between the caller and the owner of the token, so each appears in the
--- other's binder, and returns the owner's profile. Swapping twice is a no-op.
--- SECURITY DEFINER because the caller can read neither the token nor (if it is
--- private) the owner's profile before the swap exists.
+-- other's binder, and returns the owner's profile. Swapping again is a no-op, except
+-- that it makes a temporary or expired swap permanent again.
+-- SECURITY DEFINER because the caller can read neither the token nor the owner's
+-- profile before the swap exists.
+-- Refuses while either person is in Private Mode (UC001 = the caller, UC002 = the
+-- owner), and answers a block either way exactly like an unknown card (P0002) so the
+-- caller can't tell they were blocked. private_mode, swaps.expires_at and
+-- blocked_between() come from section 16; plpgsql only looks them up when the function
+-- runs, so defining it here is fine.
 create or replace function public.swap_by_card_token(card_token text)
 returns public.profiles
 language plpgsql
@@ -408,6 +402,10 @@ declare
 begin
   if me is null then
     raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  if exists (select 1 from public.profiles pr where pr.id = me and pr.private_mode) then
+    raise exception 'Turn off Private Mode to swap cards' using errcode = 'UC001';
   end if;
 
   select ct.user_id into owner_id
@@ -424,13 +422,19 @@ begin
 
   select * into p from public.profiles pr where pr.id = owner_id;
 
-  if not found then
+  -- The block check comes before the owner's Private Mode check, so a blocked caller
+  -- learns nothing about the owner.
+  if not found or public.blocked_between(me, owner_id) then
     raise exception 'No card with that code' using errcode = 'P0002';
+  end if;
+
+  if p.private_mode then
+    raise exception 'Not accepting swaps right now' using errcode = 'UC002';
   end if;
 
   insert into public.swaps (user_a, user_b)
   values (least(me, owner_id), greatest(me, owner_id))
-  on conflict (user_a, user_b) do nothing;
+  on conflict (user_a, user_b) do update set expires_at = null;
 
   return p;
 end;
@@ -556,6 +560,320 @@ alter table public.profiles
   add column if not exists card_image_url text not null default '';
 
 -- ---------------------------------------------------------------------------
+-- 16. Privacy: Private Mode, per-field privacy, temporary swaps, blocks, reports.
+--     Must come after sections 6, 12 and 14: it replaces policies they create.
+--
+--     Who sees what when viewer V looks at person T:
+--       V is T                        everything (the owner policy in section 5)
+--       T is in Private Mode          nothing
+--       a block, either way           nothing
+--       an active swap                everything
+--       a shared event, T is public   the name always; photo, bio, preferences,
+--                                     boundaries and cue color only where T's
+--                                     show_* flag is on
+--       otherwise                     nothing
+--     Other people's profiles are read ONLY through binder_cards() and
+--     event_attendees(), which apply these rules, so the rules hold even for a
+--     client that skips the app.
+-- ---------------------------------------------------------------------------
+alter table public.profiles
+  add column if not exists private_mode     boolean not null default false,
+  add column if not exists show_photo       boolean not null default true,
+  add column if not exists show_bio         boolean not null default true,
+  add column if not exists show_preferences boolean not null default true,
+  add column if not exists show_boundaries  boolean not null default true,
+  add column if not exists show_status      boolean not null default true;
+
+-- Null = permanent. A temporary swap stops counting at expires_at.
+-- shortcut: expired rows are filtered, never deleted; add a cleanup job if the table grows large.
+alter table public.swaps
+  add column if not exists expires_at timestamptz;
+
+drop policy if exists "Members can read their swaps" on public.swaps;
+create policy "Members can read their swaps"
+  on public.swaps for select
+  using (auth.uid() in (user_a, user_b) and (expires_at is null or expires_at > now()));
+
+-- A whole profiles row would leak hidden fields, so nobody but the owner reads one directly.
+drop policy if exists "Public profiles are readable"      on public.profiles;
+drop policy if exists "Swap partners can read each other" on public.profiles;
+
+-- blocks: one row per person someone has blocked. block_user() inserts (it also ends
+-- the swap); the blocker unblocks by deleting their own row.
+create table if not exists public.blocks (
+  blocker     uuid        not null default auth.uid() references auth.users (id) on delete cascade,
+  blocked     uuid        not null references auth.users (id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (blocker, blocked),
+  constraint blocks_not_self check (blocker <> blocked)
+);
+
+create index if not exists blocks_blocked_idx on public.blocks (blocked);
+
+comment on table public.blocks is 'People a user has blocked. A block hides both people from each other.';
+
+alter table public.blocks enable row level security;
+
+drop policy if exists "Blocker can read own blocks"   on public.blocks;
+drop policy if exists "Blocker can delete own blocks" on public.blocks;
+
+create policy "Blocker can read own blocks"
+  on public.blocks for select
+  using (auth.uid() = blocker);
+
+create policy "Blocker can delete own blocks"
+  on public.blocks for delete
+  using (auth.uid() = blocker);
+
+-- reports: the team reads these in the Supabase dashboard. Users can only add them,
+-- never read, change or remove one (not even their own).
+create table if not exists public.reports (
+  id          uuid        primary key default gen_random_uuid(),
+  reporter    uuid        default auth.uid() references auth.users (id) on delete set null,
+  reported    uuid        not null references auth.users (id) on delete cascade,
+  reason      text        not null check (reason in ('harassment', 'unsafe', 'spam', 'fake', 'other')),
+  note        text        not null default '' check (char_length(note) <= 1000),
+  event_id    uuid        references public.events (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+
+comment on table public.reports is 'Reports users file about other users; read by the team in the dashboard.';
+
+alter table public.reports enable row level security;
+
+drop policy if exists "Users can file reports" on public.reports;
+create policy "Users can file reports"
+  on public.reports for insert
+  to authenticated
+  with check (reporter = auth.uid() and reported <> auth.uid());
+
+-- Helpers for the functions below. Nobody may call them directly: they would tell
+-- anyone who blocked or swapped with whom.
+create or replace function public.blocked_between(a uuid, b uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.blocks bl
+    where (bl.blocker = a and bl.blocked = b) or (bl.blocker = b and bl.blocked = a)
+  );
+$$;
+
+create or replace function public.active_swap(a uuid, b uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.swaps s
+    where s.user_a = least(a, b) and s.user_b = greatest(a, b)
+      and (s.expires_at is null or s.expires_at > now())
+  );
+$$;
+
+revoke execute on function public.blocked_between(uuid, uuid) from public, anon, authenticated;
+revoke execute on function public.active_swap(uuid, uuid)     from public, anon, authenticated;
+
+-- The caller's binder: everyone they have an active swap with, minus people in
+-- Private Mode and blocks either way. Partners see every field.
+create or replace function public.binder_cards()
+returns table (
+  id uuid, display_name text, bio text, preferences text[], boundaries text[],
+  status public.cue_status, avatar_url text, card_image_url text, expires_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  -- Every column is qualified: the names above are also variables in here.
+  return query
+  select p.id, p.display_name, p.bio, p.preferences, p.boundaries,
+         p.status, p.avatar_url, p.card_image_url, s.expires_at
+  from public.swaps s
+  join public.profiles p
+    on p.id = case when s.user_a = auth.uid() then s.user_b else s.user_a end
+  where auth.uid() in (s.user_a, s.user_b)
+    and (s.expires_at is null or s.expires_at > now())
+    and not p.private_mode
+    and not public.blocked_between(auth.uid(), p.id);
+end;
+$$;
+
+revoke execute on function public.binder_cards() from public, anon;
+grant  execute on function public.binder_cards() to authenticated;
+
+-- Who has joined an event, in the order they joined, as the caller may see them.
+-- Only the host or a member may ask. On top of the rules at the top of this section,
+-- someone who isn't the host never sees an attendee whose cue is red or purple, so
+-- those people stay private to the host. The caller always sees themselves in full.
+-- status is null when the attendee hides their cue color.
+create or replace function public.event_attendees(p_event_id uuid)
+returns table (
+  user_id uuid, display_name text, avatar_url text, bio text,
+  preferences text[], boundaries text[], status public.cue_status
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  me      uuid := auth.uid();
+  ev_host uuid;
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  select e.host_id into ev_host from public.events e where e.id = p_event_id;
+
+  if ev_host is distinct from me and not public.is_event_member(p_event_id) then
+    raise exception 'Not part of this event' using errcode = '42501';
+  end if;
+
+  -- Every column is qualified: the names above are also variables in here.
+  return query
+  select m.user_id,
+         p.display_name,
+         case when v.full_view or p.show_photo       then p.avatar_url  else ''           end,
+         case when v.full_view or p.show_bio         then p.bio         else ''           end,
+         case when v.full_view or p.show_preferences then p.preferences else '{}'::text[] end,
+         case when v.full_view or p.show_boundaries  then p.boundaries  else '{}'::text[] end,
+         case when v.full_view or p.show_status      then p.status                        end
+  from public.event_members m
+  join public.profiles p on p.id = m.user_id
+  cross join lateral (
+    select m.user_id = me or public.active_swap(me, m.user_id) as full_view
+  ) v
+  where m.event_id = p_event_id
+    and (
+      m.user_id = me
+      or (
+        not p.private_mode
+        and not public.blocked_between(me, m.user_id)
+        and (v.full_view or p.is_public)
+        and (ev_host = me or p.status in ('GREEN', 'YELLOW'))
+      )
+    )
+  order by m.joined_at;
+end;
+$$;
+
+revoke execute on function public.event_attendees(uuid) from public, anon;
+grant  execute on function public.event_attendees(uuid) to authenticated;
+
+-- Makes the caller's swap with other_id temporary and returns when it ends: the
+-- soonest end still ahead of an active event they are both in (as members, or one
+-- hosts and the other joined), else 24 hours from now. An event with no end time
+-- ends 3 hours after it starts, as the app assumes. If the swap already ends sooner
+-- it keeps that time, so either person choosing temporary wins.
+create or replace function public.make_swap_temporary(other_id uuid)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me   uuid := auth.uid();
+  ends timestamptz;
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  if not public.active_swap(me, other_id) then
+    raise exception 'No swap with that person' using errcode = 'P0002';
+  end if;
+
+  select min(coalesce(e.ends_at, e.starts_at + interval '3 hours')) into ends
+  from public.events e
+  where e.active
+    and coalesce(e.ends_at, e.starts_at + interval '3 hours') > now()
+    and (e.host_id = me or exists (
+          select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))
+    and (e.host_id = other_id or exists (
+          select 1 from public.event_members m where m.event_id = e.id and m.user_id = other_id));
+
+  ends := coalesce(ends, now() + interval '24 hours');
+
+  update public.swaps s
+     set expires_at = least(coalesce(s.expires_at, ends), ends)
+   where s.user_a = least(me, other_id) and s.user_b = greatest(me, other_id)
+  returning s.expires_at into ends;
+
+  return ends;
+end;
+$$;
+
+revoke execute on function public.make_swap_temporary(uuid) from public, anon;
+grant  execute on function public.make_swap_temporary(uuid) to authenticated;
+
+-- Blocks other_id and ends any swap between the two. Blocking twice is a no-op.
+-- SECURITY DEFINER because blocks has no insert policy and the caller may not be
+-- able to see the swap row (e.g. it has expired).
+create or replace function public.block_user(other_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  insert into public.blocks (blocker, blocked)
+  values (me, other_id)
+  on conflict (blocker, blocked) do nothing;
+
+  delete from public.swaps s
+  where s.user_a = least(me, other_id) and s.user_b = greatest(me, other_id);
+end;
+$$;
+
+revoke execute on function public.block_user(uuid) from public, anon;
+grant  execute on function public.block_user(uuid) to authenticated;
+
+-- The people the caller has blocked, newest first, with their names so the app can
+-- list them for unblocking (the caller can't read their profiles any more).
+create or replace function public.my_blocked_users()
+returns table (user_id uuid, display_name text, blocked_at timestamptz)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  return query
+  select bl.blocked, coalesce(p.display_name, ''), bl.created_at
+  from public.blocks bl
+  left join public.profiles p on p.id = bl.blocked
+  where bl.blocker = auth.uid()
+  order by bl.created_at desc;
+end;
+$$;
+
+revoke execute on function public.my_blocked_users() from public, anon;
+grant  execute on function public.my_blocked_users() to authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Manual test notes
 -- ---------------------------------------------------------------------------
 -- 1. Paste this whole file into the SQL editor and run it. Run it a second time:
@@ -618,4 +936,105 @@ alter table public.profiles
 --      select * from public.swap_by_card_token('<user 1 token>');  -- same row again, no error
 --      select * from public.swaps;                                 -- one row holding both users
 --      select * from public.card_tokens;                           -- no rows: user 1's token stays hidden
+--    rollback;
+--
+-- 5. Privacy (section 16). First check it exists:
+--
+--    select proname from pg_proc
+--     where proname in ('binder_cards', 'event_attendees', 'make_swap_temporary', 'block_user',
+--                       'my_blocked_users', 'blocked_between', 'active_swap');  -- 7 rows
+--
+--    The checks below need three real users from auth.users: a host, and users 1
+--    and 2 who have both joined one of the host's events (join_event_by_code, as in
+--    note 3, without the rollback) and swapped cards (note 4, without the rollback).
+--    Each check undoes itself with rollback. The updates run as admin, before
+--    "set local role"; to switch users inside a check, run the "set local
+--    request.jwt.claims" line again with the other id.
+--
+--    a. Anon can no longer read profiles:
+--
+--    begin;
+--      set local role anon;
+--      select * from public.profiles;                     -- 0 rows
+--    rollback;
+--
+--    b. Private Mode hides user 2 from partners and attendees and stops swaps both ways:
+--
+--    begin;
+--      update public.profiles set private_mode = true where id = '<user-2-id>';
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select * from public.binder_cards();               -- no row for user 2
+--      select * from public.event_attendees('<event-id>');  -- no row for user 2
+--      select * from public.swap_by_card_token('<user 2 token>');  -- error UC002 (owner is private)
+--      set local request.jwt.claims = '{"sub": "<user-2-id>", "role": "authenticated"}';
+--      select * from public.swap_by_card_token('<user 1 token>');  -- error UC001 (caller is private)
+--    rollback;
+--
+--    c. A block hides both ways and refuses swaps like an unknown card:
+--
+--    begin;
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select public.block_user('<user-2-id>');
+--      select * from public.my_blocked_users();           -- one row: user 2 with their name
+--      select * from public.swaps;                        -- no rows: the swap ended
+--      select * from public.event_attendees('<event-id>');  -- no row for user 2
+--      select * from public.swap_by_card_token('<user 2 token>');  -- error P0002 No card with that code
+--      set local request.jwt.claims = '{"sub": "<user-2-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');  -- no row for user 1
+--      select * from public.swap_by_card_token('<user 1 token>');  -- error P0002 No card with that code
+--      select * from public.blocks;                       -- no rows: user 2 can't see user 1's block
+--    rollback;
+--
+--    d. Temporary and expired swaps (now() is fixed for the whole transaction):
+--
+--    begin;
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select public.make_swap_temporary('<user-2-id>');  -- the event's end if still ahead, else now() + 24 hours
+--      select * from public.binder_cards();               -- user 2, expires_at = that time
+--    rollback;
+--
+--    begin;
+--      update public.swaps set expires_at = now() - interval '1 minute'
+--       where '<user-1-id>' in (user_a::text, user_b::text) and '<user-2-id>' in (user_a::text, user_b::text);
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select * from public.swaps;                        -- no rows: the swap expired
+--      select * from public.binder_cards();               -- no row for user 2
+--      select public.make_swap_temporary('<user-2-id>');  -- error P0002: no active swap
+--      select * from public.swap_by_card_token('<user 2 token>');  -- user 2's profile
+--      select expires_at from public.swaps;               -- one row, expires_at null (permanent again)
+--    rollback;
+--
+--    e. Field toggles blank the fields for a co-attendee who hasn't swapped:
+--
+--    begin;
+--      delete from public.swaps
+--       where '<user-1-id>' in (user_a::text, user_b::text) and '<user-2-id>' in (user_a::text, user_b::text);
+--      update public.profiles
+--         set is_public = true, status = 'GREEN', show_photo = false, show_bio = false,
+--             show_preferences = false, show_boundaries = false, show_status = false
+--       where id = '<user-2-id>';
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');
+--        -- user 2's row: display_name set; avatar_url and bio '', preferences and
+--        -- boundaries {}, status null
+--      set local request.jwt.claims = '{"sub": "<user-2-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');  -- user 2 sees their own row in full
+--    rollback;
+--
+--    f. Someone who isn't the host never sees red or purple attendees:
+--
+--    begin;
+--      update public.profiles set status = 'RED', is_public = true where id = '<user-2-id>';
+--      set local role authenticated;
+--      set local request.jwt.claims = '{"sub": "<user-1-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');  -- no row for user 2 (even though swapped)
+--      set local request.jwt.claims = '{"sub": "<host-user-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');  -- user 2's row, status RED
+--      set local request.jwt.claims = '{"sub": "<some-other-user-id>", "role": "authenticated"}';
+--      select * from public.event_attendees('<event-id>');  -- error 42501: Not part of this event
 --    rollback;
