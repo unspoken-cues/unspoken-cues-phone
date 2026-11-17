@@ -12,6 +12,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -129,13 +130,17 @@ class EventsScreenTest {
         }
     }
 
-    private fun showDetail(repo: EventRepository, userId: String, event: Event = mixer) {
+    private fun showDetail(
+        repo: EventRepository,
+        userId: String,
+        event: Event = mixer,
+        safety: SafetyRepository = FakeSafetyRepository(),
+    ) {
         compose.setContent {
             UnspokenQueuesTheme {
                 CompositionLocalProvider(LocalClipboard provides clipboard) {
                     EventDetailScreen(
-                        // Blocking and reporting aren't exercised here; nothing reaches the server.
-                        repo, object : SafetyRepository() {}, userId, CueStatus.GREEN, event,
+                        repo, safety, userId, CueStatus.GREEN, event,
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
@@ -243,6 +248,22 @@ class EventsScreenTest {
         listOf("Gia Green", "Yan Yellow", "Rae Red", "Pat Purple").forEach {
             compose.onNodeWithText(it).performScrollTo().assertIsDisplayed()
         }
+    }
+
+    @Test
+    fun attendee_canBlockOthers_butNotThemselves() {
+        val safety = FakeSafetyRepository()
+        showDetail(FakeEventRepository(attendees = everyone.take(2)), userId = "green", safety = safety)
+
+        compose.onNodeWithContentDescription("More options for Gia Green").assertDoesNotExist()
+        compose.onNodeWithContentDescription("More options for Yan Yellow").performClick()
+        compose.onNodeWithText("Block").performClick()
+        compose.onNode(hasText("Block") and hasAnyAncestor(isDialog())).performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("yellow"), safety.blocked.map { it.userId })
+        compose.onNodeWithText("Yan Yellow").assertDoesNotExist()
+        compose.onNodeWithText("Gia Green").assertIsDisplayed()
     }
 
     @Test

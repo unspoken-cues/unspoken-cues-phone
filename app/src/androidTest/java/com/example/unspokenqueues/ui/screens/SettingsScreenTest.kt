@@ -18,10 +18,14 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** A [SafetyRepository] that answers from memory, so these tests never reach the server. */
-private class FakeSafetyRepository(blocked: List<BlockedUser> = emptyList()) : SafetyRepository() {
+/** A [SafetyRepository] that answers from memory, so tests never reach the server. */
+internal class FakeSafetyRepository(blocked: List<BlockedUser> = emptyList()) : SafetyRepository() {
     val blocked = blocked.toMutableList()
     val unblocked = mutableListOf<String>()
+
+    override suspend fun block(otherUserId: String) {
+        blocked += BlockedUser(otherUserId, "")
+    }
 
     override suspend fun blockedUsers(): List<BlockedUser> = blocked.toList()
 

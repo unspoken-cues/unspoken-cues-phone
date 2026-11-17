@@ -6,7 +6,6 @@ import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.generateJoinCode
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -116,11 +115,7 @@ open class EventRepository(
      * Level Security also lets every signed-in user read all public events.
      */
     open suspend fun myEvents(userId: String): List<Event> {
-        // user_id is read too only because EventMemberRow requires it.
-        val joinedIds = postgrest.from(MEMBERS)
-            .select(Columns.list("event_id", "user_id")) { filter { eq("user_id", userId) } }
-            .decodeList<EventMemberRow>()
-            .map { it.eventId }
+        val joinedIds = myRsvps(userId).keys.toList()
         return postgrest.from(EVENTS)
             .select {
                 filter {

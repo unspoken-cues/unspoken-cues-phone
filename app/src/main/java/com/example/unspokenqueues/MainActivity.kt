@@ -283,6 +283,8 @@ fun UnspokenCuesApp(
     // The secret token behind this user's QR code and share link; null until it has loaded.
     var cardToken by rememberSaveable { mutableStateOf<String?>(null) }
     var cardTokenFailed by remember { mutableStateOf(false) }
+    // Bumped when the server replaces the card token, so the token effect fetches the new one.
+    var tokenRotations by remember { mutableIntStateOf(0) }
     var swapping by remember { mutableStateOf(false) }
     var swapResult by remember { mutableStateOf<SwapResult?>(null) }
     // A card link that opened the app and is waiting for the user to agree to the swap.
@@ -377,9 +379,10 @@ fun UnspokenCuesApp(
         }
     }
 
-    // Load this user's card token on sign-in. If that fails (offline), every tab change tries
-    // again until it works.
-    LaunchedEffect(signedIn, userId, tab) {
+    // Load this user's card token on sign-in and after it is replaced. If that fails (offline),
+    // every tab change tries again until it works. A restart cancels the older fetch, so after
+    // two quick replacements the newest token wins.
+    LaunchedEffect(signedIn, userId, tab, tokenRotations) {
         if (!signedIn) {
             cardToken = null
             cardTokenFailed = false
@@ -770,18 +773,10 @@ fun UnspokenCuesApp(
                                 revert = { if (collection.none { it.userId == card.userId }) collection = (collection + card).sortedBy { it.name.lowercase() } },
                             ) { id ->
                                 swapRepo.removeSwap(card.userId)
-                                // The server gave this user a new card token. The removal already
-                                // happened, so failing to fetch the new one must not revert it; the
-                                // token effect tries again on the next tab change.
+                                // The server gave this user a new card token; the token effect fetches it.
                                 if (userId == id) {
                                     cardToken = null
-                                    try {
-                                        cardToken = swapRepo.myCardToken()
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        cardTokenFailed = true
-                                    }
+                                    tokenRotations++
                                 }
                             }
                         },
