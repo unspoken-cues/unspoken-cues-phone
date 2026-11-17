@@ -9,8 +9,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -20,6 +23,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.AnnouncementRepository
+import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
@@ -120,12 +125,19 @@ class EventsScreenTest {
     private val clicks = mutableListOf<String>()
     private val clipboard = FakeClipboard()
 
+    // Find the FAB's clickable surface, rather than its independently animated text child.
+    private fun hostEventButton() = compose.onNode(
+        hasClickAction() and hasAnyDescendant(hasText("Host event")),
+        useUnmergedTree = true,
+    )
+
     private fun showList(repo: EventRepository, userId: String = "host") {
         compose.setContent {
             UnspokenQueuesTheme {
                 EventsScreen(repo, userId, onHost = { clicks += "host" }, onOpen = { opened += it })
             }
         }
+        compose.waitUntil(timeoutMillis = 5_000) { hostEventButton().isDisplayed() }
     }
 
     private fun showDetail(repo: EventRepository, userId: String, event: Event = mixer) {
@@ -137,6 +149,9 @@ class EventsScreenTest {
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
+                        announcementRepo = object : AnnouncementRepository() {
+                            override suspend fun announcements(eventId: String): List<Announcement> = emptyList()
+                        },
                     )
                 }
             }
@@ -149,7 +164,7 @@ class EventsScreenTest {
     fun list_showsHostAndJoinButtons() {
         showList(FakeEventRepository())
 
-        compose.onNodeWithText("Host event").assertIsDisplayed().assertIsEnabled()
+        hostEventButton().assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Join with code").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Nothing coming up", substring = true).assertIsDisplayed()
     }
@@ -172,7 +187,7 @@ class EventsScreenTest {
     fun hostEvent_andTappingAnEvent_areHandedToTheCaller() {
         showList(FakeEventRepository(listOf(mixer, picnic)))
 
-        compose.onNodeWithText("Host event").performClick()
+        hostEventButton().performClick()
         compose.onNodeWithText("Team Picnic").performClick()
 
         assertEquals(listOf("host"), clicks)
