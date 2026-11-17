@@ -52,6 +52,7 @@ import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,9 +75,10 @@ import coil3.compose.AsyncImage
 import com.example.unspokenqueues.R
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
+import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.ui.components.EventReactionsSection
-import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.data.joinFailureMessage
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
@@ -103,6 +105,7 @@ import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.AttendeeListSkeleton
 import com.example.unspokenqueues.ui.components.Chip
 import com.example.unspokenqueues.ui.components.EventCover
+import com.example.unspokenqueues.ui.components.EventAnnouncements
 import com.example.unspokenqueues.ui.components.EventFeatureCard
 import com.example.unspokenqueues.ui.components.EventListSkeleton
 import com.example.unspokenqueues.ui.components.EventRowItem
@@ -805,8 +808,27 @@ fun EventDetailScreen(
     onEventChange: (Event) -> Unit,
     onRemoved: () -> Unit,
     onBack: () -> Unit,
+    announcementRepo: AnnouncementRepository? = null,
     reactionRepository: ReactionRepository = remember { ReactionRepository() },
     isProfilePublic: Boolean = false,
+) {
+    key(event.id, userId) {
+        EventDetailContent(repo, userId, status, event, onEventChange, onRemoved, onBack, announcementRepo, reactionRepository, isProfilePublic)
+    }
+}
+
+@Composable
+private fun EventDetailContent(
+    repo: EventRepository,
+    userId: String,
+    status: CueStatus,
+    event: Event,
+    onEventChange: (Event) -> Unit,
+    onRemoved: () -> Unit,
+    onBack: () -> Unit,
+    announcementRepo: AnnouncementRepository?,
+    reactionRepository: ReactionRepository,
+    isProfilePublic: Boolean,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -818,6 +840,8 @@ fun EventDetailScreen(
     // Bumped to load the attendee list again.
     var reload by remember { mutableIntStateOf(0) }
     var rsvp by remember { mutableStateOf<Rsvp?>(null) }
+    var membershipLoaded by remember { mutableStateOf(false) }
+    val announcements = remember(announcementRepo) { announcementRepo ?: AnnouncementRepository() }
     var showingQr by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     var confirmingEnd by remember { mutableStateOf(false) }
@@ -840,9 +864,10 @@ fun EventDetailScreen(
         }
     }
     // The viewer's own answer, and a fresh going count (the one on the list may be old).
-    LaunchedEffect(event.id) {
+    LaunchedEffect(event.id, userId, reload) {
         try {
             rsvp = repo.myRsvps(userId)[event.id]
+            membershipLoaded = true
             repo.event(event.id)?.let { if (it.goingCount != event.goingCount) onEventChange(event.copy(goingCount = it.goingCount)) }
         } catch (e: CancellationException) {
             throw e
@@ -870,6 +895,7 @@ fun EventDetailScreen(
 
     fun answer(choice: Rsvp) = perform("Couldn't save your RSVP. Check your connection and try again.") {
         repo.rsvp(event.id, userId, choice)
+        membershipLoaded = true
         val wasGoing = rsvp == Rsvp.GOING
         rsvp = choice
         val delta = (if (choice == Rsvp.GOING) 1 else 0) - (if (wasGoing) 1 else 0)
@@ -1051,6 +1077,10 @@ fun EventDetailScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        if (isHost || (membershipLoaded && rsvp != null)) {
+            EventAnnouncements(event, userId, announcements)
         }
 
         EventReactionsSection(reactionRepository, event, userId, status, isProfilePublic)

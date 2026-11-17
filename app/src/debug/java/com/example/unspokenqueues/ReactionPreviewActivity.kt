@@ -17,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.unspokenqueues.data.AnnouncementRepository
+import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.model.Attendee
@@ -55,6 +57,11 @@ class ReactionPreviewActivity : ComponentActivity() {
                         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
                     }
                 }
+                val announcements = remember {
+                    object : AnnouncementRepository() {
+                        override suspend fun announcements(eventId: String) = listOf(Announcement("sample-update", eventId, "Welcome! Quiet seating is available near the entrance.", now.minusSeconds(600)))
+                    }
+                }
                 val reactions = remember {
                     object : ReactionRepository() {
                         var opted = false
@@ -78,7 +85,7 @@ class ReactionPreviewActivity : ComponentActivity() {
                         Box(Modifier.weight(1f)) {
                             EventDetailScreen(events, "me", CueStatus.GREEN, event,
                                 onEventChange = { event = it }, onRemoved = {}, onBack = { finish() },
-                                reactionRepository = reactions, isProfilePublic = true)
+                                announcementRepo = announcements, reactionRepository = reactions, isProfilePublic = true)
                         }
                     }
                 }

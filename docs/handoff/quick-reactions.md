@@ -50,6 +50,8 @@ Actual validation during implementation:
 
 - Debug build, full JVM suite (including five reaction serialization/model tests), Android test compilation and lint: passed. One intermediate lint invocation hit an internal Kotlin FIR analysis error while sources were being edited; the stable-source rerun passed without suppressions.
 - Parent review ran the role fixture in in-process PostgreSQL 18.6 via PGlite against both the complete fresh schema and an upgrade from the unchanged baseline: passed. No Docker container or live backend was used. PGlite uses a single connection, so true simultaneous transaction races were reviewed through lock/constraint design rather than executed here.
+- After announcements merged into main, the shared event screen, fake repositories, and debug sample activities were integrated. Debug build, all 152 combined JVM tests, Android test compilation, lint, and both SQL authorization suites against the combined schema passed.
+- A final direct AndroidJUnitRunner pass against the integrated build passed all three selected checks: populated waves preview, member announcement preview, and public outsider announcement gating.
 - Connected Pixel_10a emulator (Android 17): all 13 `EventReactionsTest` tests passed, covering loading, empty/self exclusion, consent, send acknowledgement, denial/privacy refresh, retry, local cue/visibility, expiry and account cancellation. Existing event instrumentation tests compiled with a fake reaction repository; this focused run selected only the reaction class.
 
 ## Sample preview
