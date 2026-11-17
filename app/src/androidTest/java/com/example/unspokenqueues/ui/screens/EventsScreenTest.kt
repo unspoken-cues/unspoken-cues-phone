@@ -156,7 +156,7 @@ class EventsScreenTest {
     fun list_showsHostAndJoinButtons() {
         showList(FakeEventRepository())
 
-        compose.onNodeWithText("Host event").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("Host event").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Join with code").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Nothing coming up", substring = true).assertIsDisplayed()
     }
@@ -179,7 +179,7 @@ class EventsScreenTest {
     fun hostEvent_andTappingAnEvent_areHandedToTheCaller() {
         showList(FakeEventRepository(listOf(mixer, picnic)))
 
-        compose.onNodeWithText("Host event").performClick()
+        compose.onNodeWithContentDescription("Host event").performClick()
         compose.onNodeWithText("Team Picnic").performClick()
 
         assertEquals(listOf("host"), clicks)

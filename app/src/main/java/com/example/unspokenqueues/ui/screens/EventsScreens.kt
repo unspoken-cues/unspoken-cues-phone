@@ -73,6 +73,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.example.unspokenqueues.R
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
@@ -297,7 +299,8 @@ fun EventsScreen(
 
         ExtendedFloatingActionButton(
             onClick = onHost,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            // Material3 hides the extended FAB's text from screen readers, so name the button here.
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).semantics { contentDescription = "Host event" },
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
             icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
