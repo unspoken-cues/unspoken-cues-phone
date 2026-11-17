@@ -95,14 +95,17 @@ private fun LocalDate.relativeName(today: LocalDate): String? = when (this) {
  * A short "when" for a list: "Today, 5:00 PM", "Tomorrow, 5:00 PM", "Mon, 3:00 PM" within the
  * coming week, otherwise "Oct 28, 5:00 PM". An event with no time reads "Time to be announced".
  */
-fun formatWhen(event: Event, now: Instant, zone: ZoneId): String {
-    val start = event.startsAt ?: return "Time to be announced"
-    val day = start.atZone(zone).toLocalDate()
+fun formatWhen(event: Event, now: Instant, zone: ZoneId): String =
+    event.startsAt?.let { formatWhen(it, now, zone) } ?: "Time to be announced"
+
+/** [at] in the same short form as an event's time, e.g. "Tomorrow, 5:00 PM". */
+fun formatWhen(at: Instant, now: Instant, zone: ZoneId): String {
+    val day = at.atZone(zone).toLocalDate()
     val today = now.atZone(zone).toLocalDate()
-    val time = timeFormat.format(start.atZone(zone))
+    val time = timeFormat.format(at.atZone(zone))
     val daysAway = java.time.temporal.ChronoUnit.DAYS.between(today, day)
     val dayText = day.relativeName(today)
-        ?: if (daysAway in 2..6) weekdayFormat.format(start.atZone(zone)) else monthDayFormat.format(start.atZone(zone))
+        ?: if (daysAway in 2..6) weekdayFormat.format(at.atZone(zone)) else monthDayFormat.format(at.atZone(zone))
     return "$dayText, $time"
 }
 

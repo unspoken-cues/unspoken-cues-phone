@@ -105,7 +105,7 @@ class QrScreenTest {
         val card = CollectedCard("u2", Profile("Sam", "", emptyList(), emptyList(), true), CueStatus.YELLOW)
         compose.setContent {
             UnspokenQueuesTheme {
-                SwapResultDialog(SwapResult.Swapped(card), onViewBinder = { clicks += "binder" }, onDismiss = { clicks += "dismiss" })
+                SwapResultDialog(SwapResult.Swapped(card), onViewBinder = { clicks += "binder" }, onDismiss = { clicks += "dismiss" }, onMakeTemporary = { error("Not used") })
             }
         }
 
@@ -120,7 +120,7 @@ class QrScreenTest {
         val clicks = mutableListOf<String>()
         compose.setContent {
             UnspokenQueuesTheme {
-                SwapResultDialog(SwapResult.Failed("That's your own card."), onViewBinder = { clicks += "binder" }, onDismiss = { clicks += "dismiss" })
+                SwapResultDialog(SwapResult.Failed("That's your own card."), onViewBinder = { clicks += "binder" }, onDismiss = { clicks += "dismiss" }, onMakeTemporary = { error("Not used") })
             }
         }
 

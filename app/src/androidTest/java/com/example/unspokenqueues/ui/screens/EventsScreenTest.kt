@@ -23,6 +23,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.AnnouncementRepository
 import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
@@ -145,7 +146,8 @@ class EventsScreenTest {
             UnspokenQueuesTheme {
                 CompositionLocalProvider(LocalClipboard provides clipboard) {
                     EventDetailScreen(
-                        repo, userId, CueStatus.GREEN, event,
+                        // Blocking and reporting aren't exercised here; nothing reaches the server.
+                        repo, object : SafetyRepository() {}, userId, CueStatus.GREEN, event,
                         onEventChange = { opened += it },
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
@@ -238,24 +240,14 @@ class EventsScreenTest {
     // ---------- Event detail ----------
 
     @Test
-    fun detail_forAnAttendee_hidesRedAndPurple() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "green")
+    fun detail_forAnAttendee_showsWhoTheServerSends() {
+        // event_attendees() leaves out red and purple attendees for anyone but the host.
+        showDetail(FakeEventRepository(attendees = everyone.take(2)), userId = "green")
 
         compose.onNodeWithText("Design Mixer").assertIsDisplayed()
         compose.onNodeWithText("Gia Green").assertIsDisplayed()
         compose.onNodeWithText("Yan Yellow").assertIsDisplayed()
-        compose.onNodeWithText("Rae Red").assertDoesNotExist()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
         compose.onNodeWithText("Attendees · 2").assertIsDisplayed()
-    }
-
-    @Test
-    fun detail_forAnAttendeeWhoIsRed_stillShowsThemselves() {
-        showDetail(FakeEventRepository(attendees = everyone), userId = "red")
-
-        compose.onNodeWithText("Rae Red").assertIsDisplayed()
-        compose.onNodeWithText("Pat Purple").assertDoesNotExist()
-        compose.onNodeWithText("Attendees · 3").assertIsDisplayed()
     }
 
     @Test

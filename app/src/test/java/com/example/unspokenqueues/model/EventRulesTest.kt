@@ -8,54 +8,6 @@ import kotlin.random.Random
 
 class EventRulesTest {
 
-    private fun attendee(id: String, status: CueStatus) =
-        Attendee(id, Profile(id, "", emptyList(), emptyList(), true), status)
-
-    private val green = attendee("green", CueStatus.GREEN)
-    private val yellow = attendee("yellow", CueStatus.YELLOW)
-    private val red = attendee("red", CueStatus.RED)
-    private val purple = attendee("purple", CueStatus.PURPLE)
-    private val everyone = listOf(green, yellow, red, purple)
-
-    // ---------- visibleAttendees ----------
-
-    @Test
-    fun host_seesEveryone() {
-        assertEquals(everyone, visibleAttendees(viewerId = "host", hostId = "host", attendees = everyone))
-    }
-
-    @Test
-    fun hostWhoIsAlsoAnAttendee_seesEveryone() {
-        val withHost = everyone + attendee("host", CueStatus.RED)
-        assertEquals(withHost, visibleAttendees("host", "host", withHost))
-    }
-
-    @Test
-    fun attendee_seesOnlyGreenAndYellow() {
-        assertEquals(listOf(green, yellow), visibleAttendees("green", "host", everyone))
-    }
-
-    @Test
-    fun redAttendee_seesGreenYellowAndThemselves() {
-        assertEquals(listOf(green, yellow, red), visibleAttendees("red", "host", everyone))
-    }
-
-    @Test
-    fun purpleAttendee_seesGreenYellowAndThemselves_butNotRed() {
-        assertEquals(listOf(green, yellow, purple), visibleAttendees("purple", "host", everyone))
-    }
-
-    @Test
-    fun viewerWhoIsNotAttending_seesOnlyGreenAndYellow() {
-        assertEquals(listOf(green, yellow), visibleAttendees("stranger", "host", everyone))
-    }
-
-    @Test
-    fun emptyEvent_isEmptyForEveryone() {
-        assertEquals(emptyList<Attendee>(), visibleAttendees("host", "host", emptyList()))
-        assertEquals(emptyList<Attendee>(), visibleAttendees("green", "host", emptyList()))
-    }
-
     // ---------- isValidJoinCode ----------
 
     @Test

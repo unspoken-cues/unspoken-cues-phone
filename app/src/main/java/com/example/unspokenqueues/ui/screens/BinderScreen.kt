@@ -50,6 +50,10 @@ import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.binderCounts
 import com.example.unspokenqueues.model.filterBinder
+import com.example.unspokenqueues.model.formatWhen
+import com.example.unspokenqueues.model.ReportReason
+import java.time.Instant
+import java.time.ZoneId
 import com.example.unspokenqueues.ui.components.Avatar
 import com.example.unspokenqueues.ui.components.Dot
 import com.example.unspokenqueues.ui.components.Halo
@@ -57,7 +61,8 @@ import com.example.unspokenqueues.ui.components.Halo
 /**
  * The binder: your own card at the top, how many cards you hold in each cue, a search box and cue
  * filters, then the collection as a two-column grid of little cards. Tapping a card opens that
- * person's full card.
+ * person's full card, where they can be removed, blocked or reported. [onReport] files a report
+ * and throws if that failed.
  */
 @Composable
 fun BinderScreen(
@@ -65,6 +70,8 @@ fun BinderScreen(
     profile: Profile,
     collection: List<CollectedCard>,
     onRemove: (CollectedCard) -> Unit,
+    onBlock: (CollectedCard) -> Unit,
+    onReport: suspend (CollectedCard, ReportReason, String) -> Unit,
 ) {
     var opened by remember { mutableStateOf<CollectedCard?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -77,10 +84,16 @@ fun BinderScreen(
     opened?.let { card ->
         PersonDetail(
             card.profile, card.status,
+            endsAt = card.expiresAt,
             onRemove = {
                 opened = null
                 onRemove(card)
             },
+            onBlock = {
+                opened = null
+                onBlock(card)
+            },
+            onReport = { reason, note -> onReport(card, reason, note) },
         ) { opened = null }
     }
     ScreenColumn {
@@ -247,6 +260,15 @@ private fun BinderCardTile(card: CollectedCard, modifier: Modifier, onClick: () 
                 )
                 Spacer(Modifier.height(4.dp))
                 StatusLabel(card.status)
+                card.expiresAt?.let {
+                    Text(
+                        "Ends ${formatWhen(it, Instant.now(), ZoneId.systemDefault())}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
