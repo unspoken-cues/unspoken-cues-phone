@@ -5,7 +5,7 @@ Android control center for **Unspoken Cues**: status (Green/Yellow/Red/Purple), 
 Planned phone Play identity: `com.unspokencues.phone`. Current build application ID: `com.example.unspokenqueues`; coordinate the phone/watch release identity before publishing.
 
 ## Status
-The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, mutual S.W.A.P. cards/binder, and initial phone-to-watch synchronization. Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
+The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, [host announcements](docs/features/event-announcements.md), mutual S.W.A.P. cards/binder, and initial phone-to-watch synchronization. Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
 
 ## Docs
 - **Start here for engineering takeover:** [Engineering handoff](docs/handoff/README.md) — setup, architecture, feature flows, API calls, database/access rules, watch protocol, source map, testing, troubleshooting, and ownership transfer.
