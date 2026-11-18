@@ -1,9 +1,10 @@
 package com.example.unspokenqueues.data
 
+import com.example.unspokenqueues.BuildConfig
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-// Pure helpers for avatar uploads. Kept free of Android types so they can be unit-tested on the JVM.
+// Pure helpers for avatar uploads and display. Kept free of Android types so they can be unit-tested on the JVM.
 
 const val AVATAR_BUCKET = "avatars"
 
@@ -32,6 +33,18 @@ fun cardImagePublicUrl(supabaseUrl: String, userId: String, version: Long): Stri
  */
 fun avatarPublicUrl(supabaseUrl: String, userId: String, version: Long): String =
     "${supabaseUrl.trim().trimEnd('/')}/storage/v1/object/public/$AVATAR_BUCKET/${avatarPath(userId)}?v=$version"
+
+/**
+ * [image] if it is safe to show: a local Uri or file passes, but a URL string only when it points
+ * at this project's public Storage, else null so the initials or placeholder show. Image URLs are
+ * free text users write themselves, and fetching one from anyone's server would tell them who
+ * looked and when.
+ */
+fun safeImage(image: Any?, supabaseUrl: String = BuildConfig.SUPABASE_URL): Any? {
+    if (image !is String) return image
+    val base = supabaseUrl.trim().trimEnd('/')
+    return image.takeIf { base.isNotEmpty() && it.startsWith("$base/storage/v1/object/public/") }
+}
 
 /**
  * Size to scale a [width] x [height] image to so its longest side is at most [maxDimension],

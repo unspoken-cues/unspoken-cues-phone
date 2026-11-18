@@ -235,6 +235,7 @@ create policy "Users can join as themselves"
   to authenticated
   with check (auth.uid() = user_id);
 
+-- Section 21 drops both read policies below: everyone reads only their own rows.
 create policy "Members can read co-members"
   on public.event_members for select
   using (public.is_event_member(event_id));
@@ -298,9 +299,11 @@ grant  execute on function public.join_event_by_code(text) to authenticated;
 --     write inside the folder named after their own user id, e.g.
 --     avatars/<auth.uid()>/photo.jpg
 -- ---------------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('avatars', 'avatars', true)
-on conflict (id) do update set public = true;
+-- The app uploads only JPEGs it has shrunk on the device, well under 5 MB.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Avatars are publicly readable"   on storage.objects;
 drop policy if exists "Users can upload own avatar"     on storage.objects;
@@ -522,9 +525,10 @@ create policy "Members can update own rsvp"
 
 -- event-covers Storage bucket: anyone can view; a signed-in user writes only inside the
 -- folder named after their own user id, e.g. event-covers/<auth.uid()>/<file>.jpg
-insert into storage.buckets (id, name, public)
-values ('event-covers', 'event-covers', true)
-on conflict (id) do update set public = true;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('event-covers', 'event-covers', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Event covers are publicly readable"   on storage.objects;
 drop policy if exists "Users can upload own event covers"    on storage.objects;
@@ -718,6 +722,8 @@ grant  execute on function public.binder_cards() to authenticated;
 -- someone who isn't the host never sees an attendee whose cue is red or purple, so
 -- those people stay private to the host. The caller always sees themselves in full.
 -- status is null when the attendee hides their cue color.
+-- directory: section 19 gives this function another return type; drop it so re-runs work.
+drop function if exists public.event_attendees(uuid);
 create or replace function public.event_attendees(p_event_id uuid)
 returns table (
   user_id uuid, display_name text, avatar_url text, bio text,
@@ -752,7 +758,8 @@ begin
          case when v.full_view or p.show_boundaries  then p.boundaries  else '{}'::text[] end,
          case when v.full_view or p.show_status      then p.status                        end
   from public.event_members m
-  join public.profiles p on p.id = m.user_id
+  -- event profile: per-event name, bio and cue override the main profile here.
+  join public.event_effective_profiles(p_event_id) p on p.id = m.user_id
   cross join lateral (
     select m.user_id = me or public.active_swap(me, m.user_id) as full_view
   ) v
@@ -775,8 +782,8 @@ grant  execute on function public.event_attendees(uuid) to authenticated;
 
 -- Makes the caller's swap with other_id temporary and returns when it ends: the
 -- soonest end still ahead of an active event they are both in (as members, or one
--- hosts and the other joined), else 24 hours from now. An event with no end time
--- ends 3 hours after it starts, as the app assumes. If the swap already ends sooner
+-- hosts and the other joined), else 24 hours from now. An event's end is
+-- public.event_end() (section 21), as the app assumes. If the swap already ends sooner
 -- it keeps that time, so either person choosing temporary wins.
 create or replace function public.make_swap_temporary(other_id uuid)
 returns timestamptz
@@ -796,10 +803,10 @@ begin
     raise exception 'No swap with that person' using errcode = 'P0002';
   end if;
 
-  select min(coalesce(e.ends_at, e.starts_at + interval '3 hours')) into ends
+  select min(public.event_end(e)) into ends
   from public.events e
   where e.active
-    and coalesce(e.ends_at, e.starts_at + interval '3 hours') > now()
+    and public.event_end(e) > now()
     and (e.host_id = me or exists (
           select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))
     and (e.host_id = other_id or exists (
@@ -967,7 +974,7 @@ begin
     end if;
     return saved; -- A lost response can be retried even after the event ends; no new write.
   end if;
-  if not ev.active or coalesce(ev.ends_at, ev.starts_at + interval '3 hours') <= clock_timestamp() then
+  if not ev.active or public.event_end(ev) <= clock_timestamp() then
     raise exception 'Event has ended' using errcode = '42501';
   end if;
   insert into public.event_announcements (event_id, body, request_id)
@@ -1045,24 +1052,27 @@ begin
   end if;
   select coalesce((select w.receive_waves from public.event_wave_preferences w
     where w.event_id = p_event_id and w.user_id = me), false) into opted;
-  select opted and exists (select 1 from public.events e join public.profiles p on p.id = me
+  -- event profile: eligibility uses the caller's cue for this event.
+  select opted and exists (select 1 from public.events e join public.event_effective_profiles(p_event_id) p on p.id = me
     where e.id = p_event_id and e.active
-      and (coalesce(e.ends_at, e.starts_at + interval '3 hours') is null
-        or coalesce(e.ends_at, e.starts_at + interval '3 hours') > clock_timestamp())
+      and (public.event_end(e) is null
+        or public.event_end(e) > clock_timestamp())
       and public.event_wave_visible(p, me)) into eligible;
   if eligible then
     select coalesce(jsonb_agg(jsonb_build_object(
       'user_id', p.id, 'display_name', p.display_name,
       'sent', exists (select 1 from public.event_waves w where w.event_id = p_event_id
         and w.sender_id = me and w.recipient_id = p.id)) order by p.display_name, p.id), '[]'::jsonb)
-    into targets from public.profiles p join public.event_wave_preferences pref on pref.user_id = p.id
+    -- event profile: targets use per-event names and cues.
+    into targets from public.event_effective_profiles(p_event_id) p join public.event_wave_preferences pref on pref.user_id = p.id
     where pref.event_id = p_event_id and pref.receive_waves and p.id <> me
       and public.event_wave_visible(p, me)
       and public.event_wave_participant(p_event_id, p.id);
     select coalesce(jsonb_agg(jsonb_build_object(
       'sender_id', p.id, 'sender_name', p.display_name, 'created_at', w.created_at)
       order by w.created_at desc, w.sender_id), '[]'::jsonb)
-    into inbox from public.event_waves w join public.profiles p on p.id = w.sender_id
+    -- event profile: inbox uses per-event names and cues.
+    into inbox from public.event_waves w join public.event_effective_profiles(p_event_id) p on p.id = w.sender_id
       join public.event_wave_preferences pref on pref.event_id = w.event_id and pref.user_id = p.id
     where w.event_id = p_event_id and w.recipient_id = me and pref.receive_waves
       and public.event_wave_visible(p, me)
@@ -1109,10 +1119,11 @@ begin
     and m.user_id in (me, p_recipient_id) order by m.user_id for key share;
   -- Lock profiles in a consistent order: visibility/cue updates cannot race this check.
   perform 1 from public.profiles p where p.id in (me, p_recipient_id) order by p.id for update;
-  if not ev.active or coalesce(ev.ends_at, ev.starts_at + interval '3 hours') <= clock_timestamp()
+  if not ev.active or public.event_end(ev) <= clock_timestamp()
     or not public.event_wave_participant(p_event_id, me)
     or not public.event_wave_participant(p_event_id, p_recipient_id)
-    or (select count(*) from public.profiles p where p.id in (me, p_recipient_id)
+    -- event profile: both cues are checked as set for this event.
+    or (select count(*) from public.event_effective_profiles(p_event_id) p where p.id in (me, p_recipient_id)
       and public.event_wave_visible(p, me)) <> 2
     or (select count(*) from public.event_wave_preferences pref where pref.event_id = p_event_id
       and pref.user_id in (me, p_recipient_id) and pref.receive_waves) <> 2 then
@@ -1143,6 +1154,370 @@ revoke all on function public.event_wave_state(uuid), public.set_event_wave_pref
   public.send_event_wave(uuid, uuid) from public, anon;
 grant execute on function public.event_wave_state(uuid), public.set_event_wave_preference(uuid, boolean),
   public.send_event_wave(uuid, uuid) to authenticated;
+
+commit;
+
+-- 19. Event directory (same definitions as 202611170003_event_directory.sql).
+begin;
+
+-- Existing and new memberships start cued in, so nobody's visibility changes on deploy.
+alter table public.event_members add column if not exists cued_in boolean not null default true;
+
+-- directory: a co-member reading the table directly must not find a cued-out member either.
+-- (Section 21 drops this policy again: members now read only their own rows.)
+drop policy if exists "Members can read co-members" on public.event_members;
+create policy "Members can read co-members"
+  on public.event_members for select
+  using (public.is_event_member(event_id) and (cued_in or user_id = auth.uid()));
+
+-- Only the caller's own flag, and only this column. A host without a membership row has none.
+create or replace function public.set_event_cued_in(p_event_id uuid, p_cued_in boolean)
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  if p_cued_in is null then
+    raise exception 'Choose Cue In or Cue Out' using errcode = '22023';
+  end if;
+  -- Same event lock as send_event_wave, so a wave cannot slip past a concurrent Cue Out.
+  perform 1 from public.events e where e.id = p_event_id for update;
+  update public.event_members m set cued_in = p_cued_in
+    where m.event_id = p_event_id and m.user_id = me;
+  if not found then
+    raise exception 'Event member required' using errcode = '42501';
+  end if;
+  return p_cued_in;
+end;
+$$;
+revoke all on function public.set_event_cued_in(uuid, boolean) from public, anon;
+grant execute on function public.set_event_cued_in(uuid, boolean) to authenticated;
+
+-- directory: the return type gains cued_in, which create or replace cannot change.
+drop function if exists public.event_attendees(uuid);
+create function public.event_attendees(p_event_id uuid)
+returns table (
+  user_id uuid, display_name text, avatar_url text, bio text,
+  preferences text[], boundaries text[], status public.cue_status,
+  cued_in boolean -- directory: false only ever reaches the host and the member themselves
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  me      uuid := auth.uid();
+  ev_host uuid;
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+
+  select e.host_id into ev_host from public.events e where e.id = p_event_id;
+
+  if ev_host is distinct from me and not public.is_event_member(p_event_id) then
+    raise exception 'Not part of this event' using errcode = '42501';
+  end if;
+
+  -- Every column is qualified: the names above are also variables in here.
+  return query
+  select m.user_id,
+         p.display_name,
+         case when v.full_view or p.show_photo       then p.avatar_url  else ''           end,
+         case when v.full_view or p.show_bio         then p.bio         else ''           end,
+         case when v.full_view or p.show_preferences then p.preferences else '{}'::text[] end,
+         case when v.full_view or p.show_boundaries  then p.boundaries  else '{}'::text[] end,
+         case when v.full_view or p.show_status      then p.status                        end,
+         m.cued_in -- directory:
+  from public.event_members m
+  -- event profile: per-event name, bio and cue override the main profile here.
+  join public.event_effective_profiles(p_event_id) p on p.id = m.user_id
+  cross join lateral (
+    select m.user_id = me or public.active_swap(me, m.user_id) as full_view
+  ) v
+  where m.event_id = p_event_id
+    and (
+      m.user_id = me
+      or (
+        not p.private_mode
+        and not public.blocked_between(me, m.user_id)
+        and (v.full_view or p.is_public)
+        and (ev_host = me or p.status in ('GREEN', 'YELLOW'))
+        and (ev_host = me or m.cued_in) -- directory: the host still sees cued-out members
+      )
+    )
+  order by m.joined_at;
+end;
+$$;
+
+revoke execute on function public.event_attendees(uuid) from public, anon;
+grant  execute on function public.event_attendees(uuid) to authenticated;
+
+-- Waves are discoverability: a cued-out member is no wave participant, so they are no target,
+-- cannot send or receive, their sent waves leave inboxes, and event_wave_state refuses them.
+create or replace function public.event_wave_participant(p_event_id uuid, p_user_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.events e where e.id = p_event_id and
+    (e.host_id = p_user_id or exists (select 1 from public.event_members m
+      where m.event_id = e.id and m.user_id = p_user_id
+        and m.cued_in))); -- directory:
+$$;
+revoke all on function public.event_wave_participant(uuid, uuid) from public, anon, authenticated;
+
+commit;
+
+-- 20. Event profiles (same definitions as 202611170004_event_profiles.sql). The migration also
+--     redefines event_attendees (sections 16 and 19), event_wave_state and send_event_wave (section 18);
+--     those changes are made in place above, each marked "event profile:".
+begin;
+
+-- Optional per-event name, bio and cue. No row, or a null field, means the main profile's value.
+-- No table access: the owner uses the two RPCs below; others see only effective values through
+-- event_attendees() and the wave RPCs, which still apply every privacy rule on top.
+create table if not exists public.event_profiles (
+  event_id uuid not null references public.events(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  display_name text check (btrim(display_name) <> ''),
+  -- Same 120-character limit the app puts on the main bio.
+  bio text check (btrim(bio) <> '' and char_length(bio) <= 120),
+  status public.cue_status,
+  primary key (event_id, user_id),
+  -- An all-empty override is stored as no row.
+  check (coalesce(display_name, bio, status::text) is not null)
+);
+alter table public.event_profiles enable row level security;
+revoke all on public.event_profiles from public, anon, authenticated;
+
+-- The event's participants (host and members) as profiles rows with their overrides applied,
+-- so callers keep their existing privacy expressions unchanged.
+create or replace function public.event_effective_profiles(p_event_id uuid)
+returns setof public.profiles language plpgsql stable set search_path = '' as $$
+declare
+  p public.profiles;
+  o public.event_profiles;
+begin
+  for p in select pr.* from public.profiles pr where pr.id in (
+      select e.host_id from public.events e where e.id = p_event_id
+      union select m.user_id from public.event_members m where m.event_id = p_event_id) loop
+    select * into o from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = p.id;
+    p.display_name := coalesce(o.display_name, p.display_name);
+    p.bio := coalesce(o.bio, p.bio);
+    p.status := coalesce(o.status, p.status);
+    return next p;
+  end loop;
+end;
+$$;
+revoke all on function public.event_effective_profiles(uuid) from public, anon, authenticated;
+
+-- The caller's own override fields for one event; null fields use the main profile.
+create or replace function public.my_event_profile(p_event_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  me uuid := auth.uid();
+  o public.event_profiles;
+begin
+  -- Not event_wave_participant: a cued-out member still owns their event profile.
+  if me is null or not exists (select 1 from public.events e where e.id = p_event_id and (e.host_id = me
+      or exists (select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))) then
+    raise exception 'Event participant required' using errcode = '42501';
+  end if;
+  select * into o from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = me;
+  return jsonb_build_object('display_name', o.display_name, 'bio', o.bio, 'status', o.status);
+end;
+$$;
+
+-- Replaces the caller's override for one event. A blank or null field clears it; clearing all
+-- three deletes the row.
+create or replace function public.set_event_profile(
+  p_event_id uuid, p_display_name text, p_bio text, p_status public.cue_status)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  me uuid := auth.uid();
+  clean_name text := nullif(btrim(p_display_name), '');
+  clean_bio text := nullif(btrim(p_bio), '');
+begin
+  -- The membership lock stops a concurrent leave; the profile lock serializes a cue change with
+  -- send_event_wave, which locks both profiles before checking cues.
+  perform 1 from public.event_members m where m.event_id = p_event_id and m.user_id = me for key share;
+  perform 1 from public.profiles p where p.id = me for update;
+  -- Not event_wave_participant: a cued-out member still owns their event profile.
+  if me is null or not exists (select 1 from public.events e where e.id = p_event_id and (e.host_id = me
+      or exists (select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))) then
+    raise exception 'Event participant required' using errcode = '42501';
+  end if;
+  if char_length(clean_bio) > 120 then
+    raise exception 'Bio must be 120 characters or fewer' using errcode = '22023';
+  end if;
+  if coalesce(clean_name, clean_bio, p_status::text) is null then
+    delete from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = me;
+  else
+    insert into public.event_profiles(event_id, user_id, display_name, bio, status)
+      values (p_event_id, me, clean_name, clean_bio, p_status)
+      on conflict (event_id, user_id) do update
+        set display_name = excluded.display_name, bio = excluded.bio, status = excluded.status;
+  end if;
+  return public.my_event_profile(p_event_id);
+end;
+$$;
+
+-- Leaving an event drops the override, so rejoining starts from the main profile.
+create or replace function public.delete_event_profile_on_leave()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  delete from public.event_profiles ep where ep.event_id = old.event_id and ep.user_id = old.user_id;
+  return old;
+end;
+$$;
+drop trigger if exists event_members_delete_event_profile on public.event_members;
+create trigger event_members_delete_event_profile after delete on public.event_members
+  for each row execute function public.delete_event_profile_on_leave();
+revoke all on function public.delete_event_profile_on_leave() from public, anon, authenticated;
+revoke all on function public.my_event_profile(uuid),
+  public.set_event_profile(uuid, text, text, public.cue_status) from public, anon;
+grant execute on function public.my_event_profile(uuid),
+  public.set_event_profile(uuid, text, text, public.cue_status) to authenticated;
+
+commit;
+
+-- 21. Hardening (same definitions as 202611170005_hardening.sql). The migration also redefines
+--     make_swap_temporary (section 16), post_event_announcement (section 17), event_wave_state and
+--     send_event_wave (section 18) to call public.event_end(); those are changed in place above.
+begin;
+
+-- Members read only their own membership rows. Everyone else's go through event_attendees(),
+-- which applies blocks, Private Mode, visibility, the cue rule and Cue Out; a direct read skipped
+-- all of those.
+drop policy if exists "Members can read co-members"    on public.event_members;
+drop policy if exists "Host can read event members"    on public.event_members;
+drop policy if exists "Users can read own memberships" on public.event_members;
+create policy "Users can read own memberships"
+  on public.event_members for select
+  using (user_id = auth.uid());
+
+-- Profile size limits. Check constraints cannot hold a subquery, hence the helper. Executable by
+-- every role on purpose: a check constraint runs it as whoever writes the row.
+create or replace function public.text_items_fit(items text[], max_items integer, max_chars integer)
+returns boolean language sql immutable set search_path = '' as $$
+  select cardinality(items) <= max_items
+    and not exists (select 1 from unnest(items) i where char_length(i) > max_chars);
+$$;
+
+-- not valid: rows already over a limit stay, but every new write is checked.
+alter table public.profiles drop constraint if exists profiles_display_name_length;
+alter table public.profiles drop constraint if exists profiles_bio_length;
+alter table public.profiles drop constraint if exists profiles_preferences_size;
+alter table public.profiles drop constraint if exists profiles_boundaries_size;
+-- 80: the watch shows at most 80 characters of a name. 120: the app's BIO_MAX_LENGTH.
+alter table public.profiles add constraint profiles_display_name_length
+  check (char_length(display_name) <= 80) not valid;
+alter table public.profiles add constraint profiles_bio_length
+  check (char_length(bio) <= 120) not valid;
+alter table public.profiles add constraint profiles_preferences_size
+  check (public.text_items_fit(preferences, 20, 60)) not valid;
+alter table public.profiles add constraint profiles_boundaries_size
+  check (public.text_items_fit(boundaries, 20, 60)) not valid;
+alter table public.event_profiles drop constraint if exists event_profiles_display_name_length;
+alter table public.event_profiles add constraint event_profiles_display_name_length
+  check (char_length(display_name) <= 80) not valid;
+
+-- The app uploads only JPEGs it has shrunk on the device, well under 5 MB.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, '{image/jpeg}'),
+       ('event-covers', 'event-covers', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- Deletes the caller's account. Every app table cascades from auth.users, except that reports
+-- the caller filed keep their row with a null reporter. The app deletes the caller's Storage
+-- files first: Storage objects are not covered by these cascades.
+create or replace function public.delete_my_account()
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  delete from auth.users where id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
+-- When an event ends. One with no end time runs 3 hours, like DEFAULT_EVENT_LENGTH in the app;
+-- one with no start either has no end. make_swap_temporary, post_event_announcement,
+-- event_wave_state and send_event_wave use it; each is otherwise unchanged.
+create or replace function public.event_end(e public.events)
+returns timestamptz language sql stable set search_path = '' as $$
+  select coalesce(e.ends_at, e.starts_at + interval '3 hours');
+$$;
+revoke all on function public.event_end(public.events) from public, anon, authenticated;
+
+commit;
+
+-- 22. Blocked attendee warning (same definitions as 202611170006_blocked_attendee_warning.sql).
+begin;
+
+-- Only the caller's own blocks, never who blocked them (that would reveal someone else's block). Only
+-- people an ordinary member would see in event_attendees() anyway (not Private Mode, public profile,
+-- green or yellow for this event, cued in), so nothing leaks that a second, unblocked account could not
+-- already see. The host always counts: the event already shows them as host_name. Names come from the
+-- main profile, as on the blocked list, so a per-event alias is never revealed.
+-- Not SECURITY DEFINER and not executable by clients: only the two functions below call it.
+create or replace function public.blocked_attendees_for(p_event_id uuid, p_me uuid)
+returns table (user_id uuid, display_name text) language sql stable set search_path = '' as $$
+  select bl.blocked, coalesce(pr.display_name, '')
+  from public.blocks bl
+  join public.events e on e.id = p_event_id
+  left join public.profiles pr on pr.id = bl.blocked
+  where bl.blocker = p_me
+    and (bl.blocked = e.host_id or bl.blocked in (
+      select m.user_id from public.event_members m
+      join public.event_effective_profiles(p_event_id) ep on ep.id = m.user_id
+      where m.event_id = p_event_id and m.cued_in
+        and not ep.private_mode and ep.is_public and ep.status in ('GREEN', 'YELLOW')))
+  order by 2, 1;
+$$;
+revoke all on function public.blocked_attendees_for(uuid, uuid) from public, anon, authenticated;
+
+-- By event id, only for an event the caller can already read (public, hosted or joined, as the events
+-- policies allow); any other id answers nothing, so this is no way to test whether an event exists.
+create or replace function public.blocked_attendees(p_event_id uuid)
+returns table (user_id uuid, display_name text) language plpgsql stable security definer set search_path = '' as $$
+declare me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  if exists (select 1 from public.events e where e.id = p_event_id
+      and (e.is_public or e.host_id = me or public.is_event_member(e.id))) then
+    return query select * from public.blocked_attendees_for(p_event_id, me);
+  end if;
+end;
+$$;
+
+-- By join code, found the way join_event_by_code() finds it (active, trimmed, any case), without
+-- joining. Anyone holding the code could join and look, so this reveals nothing more.
+create or replace function public.blocked_attendees_by_code(code text)
+returns table (user_id uuid, display_name text) language plpgsql stable security definer set search_path = '' as $$
+declare
+  me uuid := auth.uid();
+  ev_id uuid;
+begin
+  if me is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  select e.id into ev_id from public.events e
+  where upper(e.join_code) = upper(trim(code)) and e.active
+  limit 1;
+  if ev_id is not null then
+    return query select * from public.blocked_attendees_for(ev_id, me);
+  end if;
+end;
+$$;
+
+revoke all on function public.blocked_attendees(uuid), public.blocked_attendees_by_code(text) from public, anon;
+grant execute on function public.blocked_attendees(uuid), public.blocked_attendees_by_code(text) to authenticated;
 
 commit;
 

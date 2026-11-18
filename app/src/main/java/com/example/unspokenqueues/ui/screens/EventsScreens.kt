@@ -69,6 +69,8 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -88,9 +90,12 @@ import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.EventPhase
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.JOIN_CODE_MAX_LENGTH
 import com.example.unspokenqueues.model.MAX_TAGS_PER_EVENT
+import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
+import com.example.unspokenqueues.model.blockedAttendeeWarning
 import com.example.unspokenqueues.model.dayHeader
 import com.example.unspokenqueues.model.filterByTags
 import com.example.unspokenqueues.model.formatDay
@@ -166,6 +171,8 @@ fun EventsScreen(
     var joining by remember { mutableStateOf(false) }
     var joinError by remember { mutableStateOf<String?>(null) }
     var rsvpError by remember { mutableStateOf<String?>(null) }
+    // Blocked people going, and how to join anyway; null when no warning is up.
+    var blockedWarning by remember { mutableStateOf<Pair<List<String>, () -> Unit>?>(null) }
     val scope = rememberCoroutineScope()
     val zone = remember { ZoneId.systemDefault() }
     val now = remember(mine, discover) { Instant.now() }
@@ -190,13 +197,21 @@ fun EventsScreen(
         }
     }
 
-    fun join(text: String) {
+    // [checked] once the user has chosen Join anyway.
+    fun join(text: String, checked: Boolean = false) {
         if (joining) return
         joinError = null
         joining = true
         scope.launch {
             try {
-                onOpen(repo.joinByCode(text))
+                // Hosting or already in it: joining again changes nothing, so there is nothing to warn about.
+                val inIt = mine.orEmpty().any { it.joinCode.equals(text.trim(), ignoreCase = true) }
+                val blocked = if (checked || inIt) emptyList() else blockedOrNone { repo.blockedAttendeesByCode(text) }
+                if (blocked.isNotEmpty()) {
+                    blockedWarning = blocked to { join(text, checked = true) }
+                } else {
+                    onOpen(repo.joinByCode(text))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -208,10 +223,15 @@ fun EventsScreen(
     }
 
     // One-tap RSVP from the Discover feed.
-    fun quickRsvp(event: Event) {
+    fun quickRsvp(event: Event, checked: Boolean = false) {
         rsvpError = null
         scope.launch {
             try {
+                val blocked = if (checked) emptyList() else blockedOrNone { repo.blockedAttendees(event.id) }
+                if (blocked.isNotEmpty()) {
+                    blockedWarning = blocked to { quickRsvp(event, checked = true) }
+                    return@launch
+                }
                 repo.rsvp(event.id, userId, Rsvp.GOING)
                 rsvps = rsvps + (event.id to Rsvp.GOING)
                 discover = discover?.map { if (it.id == event.id) it.copy(goingCount = it.goingCount + 1) else it }
@@ -289,7 +309,7 @@ fun EventsScreen(
                         shownTab == 1 -> DiscoverList(
                             events = filterByTags(feed.orEmpty(), activeTags),
                             now = now, zone = zone, userId = userId, rsvps = rsvps,
-                            onRsvp = ::quickRsvp, onOpen = onOpen,
+                            onRsvp = { quickRsvp(it) }, onOpen = onOpen,
                         )
                         else -> PastList(
                             events = filterByTags(past.orEmpty(), activeTags),
@@ -310,8 +330,8 @@ fun EventsScreen(
         )
     }
 
-    // Hidden while the scanner is up so the two dialogs don't stack.
-    if (joinOpen && !scanning) {
+    // Hidden while the scanner or a warning is up so the dialogs don't stack.
+    if (joinOpen && !scanning && blockedWarning == null) {
         JoinEventDialog(
             code = code,
             onCodeChange = {
@@ -345,6 +365,37 @@ fun EventsScreen(
             hint = "Point the camera at the event's QR code",
         )
     }
+    blockedWarning?.let { (names, joinAnyway) ->
+        BlockedAttendeeDialog(names, onJoin = joinAnyway, onDismiss = { blockedWarning = null })
+    }
+}
+
+// The warning is advisory: if the check itself fails (e.g. offline), joining goes ahead as it did
+// before the warning existed rather than stopping the user.
+private suspend fun blockedOrNone(check: suspend () -> List<String>): List<String> =
+    try {
+        check()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+/** Asks before joining an event that [names], people the user blocked, are going to. */
+@Composable
+private fun BlockedAttendeeDialog(names: List<String>, onJoin: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (names.size == 1) "Someone you blocked is going" else "People you blocked are going") },
+        text = { Text(blockedAttendeeWarning(names)) },
+        confirmButton = {
+            TextButton({
+                onDismiss()
+                onJoin()
+            }) { Text("Join anyway") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -801,7 +852,8 @@ private fun PickRow(label: String, value: String, onClick: () -> Unit) {
  * attendee leaves it, the host deletes it for everyone. [status] is the viewer's own cue, which
  * colours the join QR's frame. [onEventChange] receives the event once it has changed (ended, or
  * a fresh going count); [onRemoved] is called once the viewer has left or deleted it. Other
- * attendees can be blocked or reported through [safety].
+ * attendees can be blocked or reported through [safety]. [mainProfile] is the viewer's own profile,
+ * shown as the fallback when they set a name, bio or cue just for this event.
  */
 @Composable
 fun EventDetailScreen(
@@ -816,11 +868,12 @@ fun EventDetailScreen(
     announcementRepo: AnnouncementRepository? = null,
     reactionRepository: ReactionRepository = remember { ReactionRepository() },
     profileVisibleForWaves: Boolean = false,
+    mainProfile: Profile? = null,
 ) {
     key(event.id, userId) {
         EventDetailContent(
             repo, safety, userId, status, event, onEventChange, onRemoved, onBack,
-            announcementRepo, reactionRepository, profileVisibleForWaves,
+            announcementRepo, reactionRepository, profileVisibleForWaves, mainProfile,
         )
     }
 }
@@ -838,6 +891,7 @@ private fun EventDetailContent(
     announcementRepo: AnnouncementRepository?,
     reactionRepository: ReactionRepository,
     profileVisibleForWaves: Boolean,
+    mainProfile: Profile?,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -845,6 +899,8 @@ private fun EventDetailContent(
     val phase = event.phase(now)
     // Null until the first load answers.
     var attendees by remember { mutableStateOf<List<Attendee>?>(null) }
+    // The viewer's own row, which only a member has: it carries their Cue In / Cue Out choice.
+    val me = attendees?.firstOrNull { it.userId == userId }
     var loadFailed by remember { mutableStateOf(false) }
     // Bumped to load the attendee list again.
     var reload by remember { mutableIntStateOf(0) }
@@ -858,9 +914,16 @@ private fun EventDetailContent(
     var waveRefreshAfterBlock by remember { mutableIntStateOf(0) }
     var blocking by remember { mutableStateOf<Attendee?>(null) }
     var reporting by remember { mutableStateOf<Attendee?>(null) }
+    // Blocked people going, and how to RSVP anyway; null when no warning is up.
+    var blockedWarning by remember { mutableStateOf<Pair<List<String>, () -> Unit>?>(null) }
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    val participant = isHost || (membershipLoaded && rsvp != null)
+    // The viewer's own override for this event; null until it has loaded once.
+    var eventProfile by remember { mutableStateOf<EventProfile?>(null) }
+    var eventProfileTried by remember { mutableStateOf(false) }
+    var editingEventProfile by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // Compose's clipboard rather than the system service, so a test can swap in a fake one.
     val clipboard = LocalClipboard.current
@@ -888,6 +951,19 @@ private fun EventDetailContent(
         }
     }
 
+    LaunchedEffect(event.id, participant, reload) {
+        if (!participant) return@LaunchedEffect
+        try {
+            eventProfile = repo.myEventProfile(event.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Keep any earlier answer; the section says so if there never was one.
+        } finally {
+            eventProfileTried = true
+        }
+    }
+
     fun perform(failure: String, action: suspend () -> Unit) {
         if (working) return
         working = true
@@ -905,7 +981,15 @@ private fun EventDetailContent(
         }
     }
 
-    fun answer(choice: Rsvp) = perform("Couldn't save your RSVP. Check your connection and try again.") {
+    // Only a first RSVP joins, so only it checks for blocked people; [checked] once they chose Join anyway.
+    fun answer(choice: Rsvp, checked: Boolean = false): Unit = perform("Couldn't save your RSVP. Check your connection and try again.") {
+        if (rsvp == null && !checked) {
+            val blocked = blockedOrNone { repo.blockedAttendees(event.id) }
+            if (blocked.isNotEmpty()) {
+                blockedWarning = blocked to { answer(choice, checked = true) }
+                return@perform
+            }
+        }
         repo.rsvp(event.id, userId, choice)
         membershipLoaded = true
         val wasGoing = rsvp == Rsvp.GOING
@@ -913,6 +997,13 @@ private fun EventDetailContent(
         val delta = (if (choice == Rsvp.GOING) 1 else 0) - (if (wasGoing) 1 else 0)
         if (delta != 0) onEventChange(event.copy(goingCount = (event.goingCount + delta).coerceAtLeast(0)))
         reload++
+    }
+
+    fun cue(cuedIn: Boolean) = perform(
+        "Couldn't ${if (cuedIn) "cue you in" else "cue you out"}. Check your connection and try again.",
+    ) {
+        repo.setCuedIn(event.id, cuedIn)
+        attendees = attendees?.map { if (it.userId == userId) it.copy(cuedIn = cuedIn) else it }
     }
 
     fun end() = perform("Couldn't end the event. Check your connection and try again.") {
@@ -1103,10 +1194,36 @@ private fun EventDetailContent(
             )
         }
 
-        if (isHost || (membershipLoaded && rsvp != null)) {
+        me?.let { self ->
+            SectionCard(title = "Event directory") {
+                Text(
+                    if (self.cuedIn) "You're cued in: attendees can see you here and wave."
+                    else "You're cued out: only the host sees you. Your RSVP and updates stay.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val label = if (self.cuedIn) "Cue Out" else "Cue In"
+                OutlinedButton(
+                    { cue(!self.cuedIn) },
+                    Modifier.fillMaxWidth().height(52.dp).semantics {
+                        contentDescription = if (self.cuedIn) "$label: hide me from this event's attendee list"
+                        else "$label: show me on this event's attendee list"
+                    },
+                    enabled = !working,
+                ) { Text(label) }
+            }
+        }
+
+        if (participant) {
+            EventProfileSection(eventProfile, eventProfileTried, mainProfile?.displayName.orEmpty()) { editingEventProfile = true }
             EventAnnouncements(event, userId, announcements)
-            key(waveRefreshAfterBlock) {
-                EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+            // Waves are discoverability, so a cued-out member has none (the server refuses them too).
+            // Members wait for their own attendee row so a cued-out member never sees a load error;
+            // everyone waits for the event cue so local eligibility matches the server's check.
+            if ((isHost || me?.cuedIn == true) && eventProfileTried) {
+                key(waveRefreshAfterBlock) {
+                    EventReactionsSection(reactionRepository, event, userId, eventProfile?.status ?: status, profileVisibleForWaves)
+                }
             }
         }
 
@@ -1151,6 +1268,24 @@ private fun EventDetailContent(
             dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
         )
     }
+    if (editingEventProfile) {
+        EventProfileDialog(
+            current = eventProfile ?: EventProfile(),
+            mainName = mainProfile?.displayName.orEmpty(),
+            mainBio = mainProfile?.bio.orEmpty(),
+            mainStatus = status,
+            onSave = {
+                eventProfile = repo.saveEventProfile(event.id, it)
+                editingEventProfile = false
+                // The viewer's own attendee row now shows the event values.
+                reload++
+            },
+            onDismiss = { editingEventProfile = false },
+        )
+    }
+    blockedWarning?.let { (names, rsvpAnyway) ->
+        BlockedAttendeeDialog(names, onJoin = rsvpAnyway, onDismiss = { blockedWarning = null })
+    }
     blocking?.let { person ->
         ConfirmBlockDialog(person.name, onConfirm = { block(person) }, onDismiss = { blocking = null })
     }
@@ -1190,6 +1325,28 @@ private fun EventDetailContent(
     }
 }
 
+/** Entry to the event profile editor, saying what others at this event see. */
+@Composable
+private fun EventProfileSection(profile: EventProfile?, tried: Boolean, mainName: String, onEdit: () -> Unit) {
+    SectionCard(title = "Your profile at this event") {
+        Text(
+            when {
+                profile == null && tried -> "Couldn't load your profile for this event. Refresh to try again."
+                profile == null -> "Loading…"
+                profile == EventProfile() -> "You appear with your main profile. You can set a different name, bio or cue just for this event."
+                else -> listOfNotNull(
+                    "Here you appear as ${profile.displayName ?: mainName}",
+                    profile.status?.let { "with a ${it.label} cue" },
+                ).joinToString(" ") + ". Anything you haven't set uses your main profile."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedButton(onEdit, Modifier.fillMaxWidth().height(52.dp), enabled = profile != null) {
+            Text("Edit profile for this event")
+        }
+    }
+}
+
 // [onBlock] is null for the viewer's own row, which then has no actions menu.
 @Composable
 private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() -> Unit)?, onReport: () -> Unit) {
@@ -1205,6 +1362,9 @@ private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() 
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             status?.let { StatusLabel(it) }
+            if (!person.cuedIn) {
+                Text("Cued out", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         if (onBlock != null) {
             Box {

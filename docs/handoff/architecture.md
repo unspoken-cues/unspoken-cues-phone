@@ -51,7 +51,7 @@ The root collects `AuthRepository.sessionStatus`. Authenticated confirms the cur
 
 `appPhase` selects SIGNED_OUT, LOADING, PROFILE_SETUP, TUTORIAL or MAIN. Password recovery is an additional root-level override because a valid recovery session is authenticated but must show password entry first. See [feature flows](feature-flows.md).
 
-An account change clears token, binder, open event and overlay state in the authenticated branch. Watch publishing additionally waits until the loaded profile belongs to the confirmed session. Initial profile state still uses `MockData.profile`; this is a placeholder in a real-backed application, not an offline account cache. See the account-load risk in [known issues](known-issues.md).
+An account change clears token, binder, open event and overlay state in the authenticated branch. Watch publishing additionally waits until the loaded profile belongs to the confirmed session. Initial profile state is a blank placeholder, not an offline account cache. See the account-load risk in [known issues](known-issues.md).
 
 ## Navigation
 
@@ -73,7 +73,7 @@ There are no web routes for profiles or events. Card links and password recovery
 | `watch_owner` | Phone `settings` | Last account whose active DataItem was successfully submitted locally |
 | Watch publisher fields, revision and generation | Phone `watch_publisher` preferences | Reused across app restarts; explicitly excluded from backup/transfer |
 | Memberships, events, swaps, card tokens | Supabase tables | Explicit repository queries; no live subscriptions |
-| Uploaded JPEGs | Public Storage buckets | URL stored in profile/event; image loading uses Coil |
+| Uploaded JPEGs | Public Storage buckets | URL stored in profile/event; Coil loads it only if `safeImage` finds it under this project's public Storage path |
 | Watch cue/profile/lock/order metadata | Watch `watch_state` preferences | Survives restarts/disconnection; backups excluded |
 
 Binder loads on sign-in while Cue or Binder is selected, and whenever switching into either tab. A failed load leaves the previous in-memory value. Card token loads on sign-in and retries on tab changes until non-null. Events load when their screen enters composition; attendee refresh is explicit. Event time classification uses a remembered `Instant`, not a continuously ticking clock.

@@ -34,6 +34,7 @@ import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
@@ -53,6 +54,11 @@ private class FakeEventRepository(
     val ended = mutableListOf<String>()
     val left = mutableListOf<Pair<String, String>>()
     val deleted = mutableListOf<String>()
+    val cued = mutableListOf<Pair<String, Boolean>>()
+
+    override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) {
+        cued += eventId to cuedIn
+    }
 
     override suspend fun createEvent(hostId: String, draft: EventDraft): Event =
         Event(
@@ -72,9 +78,17 @@ private class FakeEventRepository(
 
     override suspend fun eventAttendees(eventId: String): List<Attendee> = attendees
 
+    // Never reach the server for the viewer's event profile.
+    override suspend fun myEventProfile(eventId: String) = EventProfile()
+
     override suspend fun joinByCode(code: String): Event =
         events.firstOrNull { it.active && it.joinCode.equals(code.trim(), ignoreCase = true) }
             ?: error("No active event with that code")
+
+    // Nobody here is blocked; BlockedAttendeeWarningTest covers the warning.
+    override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
+
+    override suspend fun blockedAttendeesByCode(code: String) = emptyList<String>()
 
     override suspend fun endEvent(eventId: String) {
         ended += eventId
@@ -302,6 +316,46 @@ class EventsScreenTest {
         listOf("Gia Green", "Yan Yellow", "Rae Red", "Pat Purple").forEach {
             compose.onNodeWithText(it).performScrollTo().assertIsDisplayed()
         }
+    }
+
+    // ---------- Cue In / Cue Out ----------
+
+    @Test
+    fun member_canCueOut_andBackIn_whichHidesAndRestoresWaves() {
+        // The event makes "green" a member (myRsvps answers going), which is what shows waves.
+        val repo = FakeEventRepository(events = listOf(mixer), attendees = everyone.take(2))
+        showDetail(repo, userId = "green")
+        val waves = compose.onNodeWithText("Refresh waves")
+        waves.performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("Cue Out: hide me from this event's attendee list")
+            .performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("e1" to false), repo.cued)
+        compose.onNodeWithText("You're cued out", substring = true).performScrollTo().assertIsDisplayed()
+        // Their own row says so; only they and the host ever see it.
+        compose.onNodeWithText("Cued out").performScrollTo().assertIsDisplayed()
+        waves.assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("Cue In: show me on this event's attendee list")
+            .performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("e1" to false, "e1" to true), repo.cued)
+        compose.onNodeWithText("Cued out").assertDoesNotExist()
+        compose.onNodeWithText("Refresh waves").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun host_seesCuedOutMembersMarked_andHasNoSwitch() {
+        val cuedOut = everyone.first().copy(cuedIn = false)
+        showDetail(FakeEventRepository(attendees = listOf(cuedOut) + everyone.drop(1)), userId = "host")
+
+        compose.onNodeWithText("Gia Green").assertIsDisplayed()
+        compose.onNodeWithText("Cued out").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Cue Out").assertDoesNotExist()
+        compose.onNodeWithText("Cue In").assertDoesNotExist()
     }
 
     @Test

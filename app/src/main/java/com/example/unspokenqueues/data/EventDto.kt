@@ -3,7 +3,9 @@ package com.example.unspokenqueues.data
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Profile
+import com.example.unspokenqueues.model.eventProfileOf
 import com.example.unspokenqueues.model.Rsvp
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -80,7 +82,21 @@ data class AttendeeRow(
     val preferences: List<String> = emptyList(),
     val boundaries: List<String> = emptyList(),
     val status: String? = null,
+    // Missing from a server without the event directory migration, where everyone is listed.
+    @SerialName("cued_in") val cuedIn: Boolean = true,
 )
+
+/** The answer of `my_event_profile()` / `set_event_profile()`: the caller's override, null where unset. */
+@Serializable
+data class EventProfileRow(
+    @SerialName("display_name") val displayName: String? = null,
+    val bio: String? = null,
+    val status: String? = null,
+)
+
+/** A status the app doesn't know reads as unset, so the main cue applies; the server decides waves anyway. */
+fun EventProfileRow.toEventProfile(): EventProfile =
+    eventProfileOf(displayName.orEmpty(), bio.orEmpty(), CueStatus.entries.firstOrNull { it.name == status })
 
 /** An attendee row as an attendee. A status the app doesn't know reads as hidden. */
 fun AttendeeRow.toAttendee(): Attendee = Attendee(
@@ -88,4 +104,5 @@ fun AttendeeRow.toAttendee(): Attendee = Attendee(
     // isPublic isn't sent: someone else's visibility setting is none of the viewer's business.
     profile = Profile(displayName, bio, preferences, boundaries, isPublic = false, avatarUrl = avatarUrl),
     status = CueStatus.entries.firstOrNull { it.name == status },
+    cuedIn = cuedIn,
 )

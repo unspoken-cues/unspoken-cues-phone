@@ -154,6 +154,14 @@ class DtoMappersTest {
     }
 
     @Test
+    fun attendeeRow_carriesCuedOut_andReadsAsCuedInWhenAbsent() {
+        val out = json.decodeFromString<AttendeeRow>("""{"user_id":"u1","cued_in":false}""").toAttendee()
+        assertEquals(false, out.cuedIn)
+        // A server without the event directory migration doesn't send it; everyone is listed there.
+        assertEquals(true, json.decodeFromString<AttendeeRow>("""{"user_id":"u1"}""").toAttendee().cuedIn)
+    }
+
+    @Test
     fun attendeeRow_withUnknownStatus_readsAsHidden() {
         assertNull(AttendeeRow(userId = "u1", status = "BLUE").toAttendee().status)
     }

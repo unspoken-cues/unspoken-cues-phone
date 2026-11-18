@@ -33,3 +33,11 @@ Reference points at review: phone `6e3fce7` on `feature/ui-ux-overhaul`; watch `
 Update the matching topic when changing a repository method, SQL policy/function, saved-state field, deep link, dependency, application ID or watch field. Review both applications for every shared contract change. Record verification results with the environment and date; keep proposals and unverified behavior explicitly labeled. Do not add credentials, recovery links, real card tokens, signing keys or personal test data to examples.
 
 See [event waves](quick-reactions.md) for quick-reaction setup, authorization, verification and rollback.
+
+See [event directory](event-directory.md) for Cue In / Cue Out setup, authorization, verification and rollback.
+
+See [event profiles](event-profiles.md) for per-event name, bio and cue overrides: setup, authorization, verification and rollback.
+
+See [hardening](hardening.md) for the 2026-11-17 audit fixes: own-row membership reads, profile size limits, JPEG-only buckets, account deletion and the shared event end rule.
+
+See [blocked attendee warning](blocked-attendee-warning.md) for the warning before joining an event someone you blocked is going to: the visibility rule, setup, verification and rollback.

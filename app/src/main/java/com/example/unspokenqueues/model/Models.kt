@@ -76,9 +76,20 @@ data class ProfilePrivacy(
 
 // Someone who has joined an event. userId is their account id. status is null when they hide
 // their cue color from the viewer. The server leaves out anyone the viewer may not see.
-data class Attendee(val userId: String, val profile: Profile, val status: CueStatus?) {
+// cuedIn is false only on the viewer's own row or, for the host, a member who cued out.
+data class Attendee(val userId: String, val profile: Profile, val status: CueStatus?, val cuedIn: Boolean = true) {
     val name get() = profile.displayName
 }
+
+/**
+ * The signed-in user's own name, bio and cue for one event. A null field uses the main profile's
+ * value there; all null means no override. The global cue (home, card, watch) never uses these.
+ */
+data class EventProfile(val displayName: String? = null, val bio: String? = null, val status: CueStatus? = null)
+
+/** What the event profile editor saves: trimmed, with a blank field meaning "use the main profile". */
+fun eventProfileOf(name: String, bio: String, status: CueStatus?): EventProfile =
+    EventProfile(name.trim().ifEmpty { null }, bio.trim().ifEmpty { null }, status)
 
 // An event hosted by one user; others join it with the join code, or RSVP from the Discover feed
 // when it is public. Everything after [active] has a default so an event made before event pages
@@ -114,7 +125,7 @@ const val JOIN_CODE_MIN_LENGTH = 4
 const val JOIN_CODE_MAX_LENGTH = 8
 
 /** Length of the join codes the app generates for new events. */
-const val JOIN_CODE_LENGTH = 6
+const val JOIN_CODE_LENGTH = 8
 
 // Capital letters and digits, minus the ones people mix up when reading a code aloud or off a
 // screen (0/O, 1/I/L).
@@ -159,6 +170,13 @@ enum class ReportReason(val wire: String, val label: String) {
 /** Someone the signed-in user has blocked, as listed for unblocking. */
 data class BlockedUser(val userId: String, val name: String)
 
+/** The warning before joining an event that [names] (people the user blocked) are going to. */
+fun blockedAttendeeWarning(names: List<String>): String {
+    val shown = names.map { it.ifBlank { "Someone" } }
+    val list = if (shown.size == 1) shown[0] else shown.dropLast(1).joinToString(", ") + " and " + shown.last()
+    return "$list, who you blocked, ${if (shown.size == 1) "is" else "are"} going to this event."
+}
+
 /** How an attempt to collect someone's card from a scan or a link ended. */
 sealed interface SwapResult {
     data class Swapped(val card: CollectedCard) : SwapResult
@@ -184,15 +202,4 @@ fun cardTokenFrom(text: String): String? {
     val token = cardLinkPattern.find(text)?.groupValues?.get(1)
         ?: text.trim().takeIf { bareTokenPattern.matches(it) }
     return token?.lowercase()
-}
-
-// Mock data until the backend decision is made (Sprint 1).
-object MockData {
-    val profile = Profile(
-        displayName = "Alex Rivera",
-        bio = "Designer. Coffee first, conversation second.",
-        preferences = listOf("Text over calls", "Small groups", "Direct feedback"),
-        boundaries = listOf("No hugs without asking", "No photos"),
-        isPublic = true,
-    )
 }

@@ -25,6 +25,7 @@ import com.example.unspokenqueues.data.ReactionRepository
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Reaction
 import com.example.unspokenqueues.model.ReactionState
@@ -56,7 +57,11 @@ class ReactionPreviewActivity : ComponentActivity() {
                         override suspend fun myRsvps(userId: String) = mapOf("sample-event" to Rsvp.GOING)
                         override suspend fun event(eventId: String): Event? = null
                         override suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) = Unit
+                        override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
                         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
+                        override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) = Unit
+                        override suspend fun myEventProfile(eventId: String) = EventProfile()
+                        override suspend fun saveEventProfile(eventId: String, profile: EventProfile) = profile
                     }
                 }
                 val announcements = remember {

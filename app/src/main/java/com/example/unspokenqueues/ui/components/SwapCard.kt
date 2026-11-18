@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.example.unspokenqueues.data.safeImage
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
 import com.google.zxing.WriterException
@@ -98,7 +99,7 @@ fun SwapCard(
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
                             )
-                            profile.cardPicture?.let { image ->
+                            safeImage(profile.cardPicture)?.let { image ->
                                 AsyncImage(
                                     model = image,
                                     contentDescription = null,

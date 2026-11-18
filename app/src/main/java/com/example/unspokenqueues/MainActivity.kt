@@ -684,6 +684,7 @@ fun UnspokenCuesApp(
                 Box(Modifier.padding(padding)) {
                     SettingsScreen(
                         safety = safetyRepo,
+                        account = authRepo,
                         watch = watch,
                         themeMode = themeMode,
                         onThemeModeChange = onThemeModeChange,
@@ -691,6 +692,11 @@ fun UnspokenCuesApp(
                             watchRetry++
                         },
                         onSignOut = ::signOut,
+                        // The session is already cleared; this only resets what the next sign-in sees.
+                        onAccountDeleted = {
+                            showingSettings = false
+                            tab = Tab.CUE
+                        },
                         onBack = { showingSettings = false },
                     )
                 }
@@ -726,6 +732,7 @@ fun UnspokenCuesApp(
                             onRemoved = { openEvent = null },
                             onBack = { openEvent = null },
                             profileVisibleForWaves = profile.isPublic && !profile.privateMode && profile.privacy.showStatus,
+                            mainProfile = profile,
                         )
                     }
                 }
