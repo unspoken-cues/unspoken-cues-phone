@@ -111,6 +111,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.example.unspokenqueues.R
+import com.example.unspokenqueues.data.AuthRepository
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.authFailureMessage
 import com.example.unspokenqueues.data.joinFailureMessage
@@ -1389,11 +1390,13 @@ internal fun ConfirmBlockDialog(name: String, onConfirm: () -> Unit, onDismiss: 
 @Composable
 fun SettingsScreen(
     safety: SafetyRepository,
+    account: AuthRepository,
     watch: WatchConnection,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     onReconnect: () -> Unit,
     onSignOut: () -> Unit,
+    onAccountDeleted: () -> Unit,
     onBack: () -> Unit,
 ) {
     // The tab tour, replayed on demand over this screen. Watching it again changes nothing that
@@ -1455,6 +1458,55 @@ fun SettingsScreen(
         TextButton(onSignOut, Modifier.fillMaxWidth()) {
             Text("Sign out", color = MaterialTheme.colorScheme.error)
         }
+        DeleteAccountButton(account, onAccountDeleted)
+    }
+}
+
+/** Deletes the account for good, after a confirmation that says what goes with it. */
+@Composable
+private fun DeleteAccountButton(account: AuthRepository, onDeleted: () -> Unit) {
+    var confirming by rememberSaveable { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun delete() {
+        deleting = true
+        error = null
+        scope.launch {
+            try {
+                account.deleteAccount()
+                onDeleted()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                confirming = false
+                error = "Couldn't delete your account. Check your connection and try again."
+            } finally {
+                deleting = false
+            }
+        }
+    }
+    TextButton({ confirming = true }, Modifier.fillMaxWidth(), enabled = !deleting) {
+        Text("Delete account", color = MaterialTheme.colorScheme.error)
+    }
+    error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { if (!deleting) confirming = false },
+            title = { Text("Delete your account?") },
+            text = {
+                Text(
+                    "This permanently deletes your profile, your S.W.A.P. card and photos, your binder, " +
+                        "the events you host and your event memberships. It can't be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(::delete, enabled = !deleting) {
+                    Text(if (deleting) "Deleting…" else "Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton({ confirming = false }, enabled = !deleting) { Text("Cancel") } },
+        )
     }
 }
 

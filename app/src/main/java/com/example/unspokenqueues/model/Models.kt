@@ -125,7 +125,7 @@ const val JOIN_CODE_MIN_LENGTH = 4
 const val JOIN_CODE_MAX_LENGTH = 8
 
 /** Length of the join codes the app generates for new events. */
-const val JOIN_CODE_LENGTH = 6
+const val JOIN_CODE_LENGTH = 8
 
 // Capital letters and digits, minus the ones people mix up when reading a code aloud or off a
 // screen (0/O, 1/I/L).
@@ -195,15 +195,4 @@ fun cardTokenFrom(text: String): String? {
     val token = cardLinkPattern.find(text)?.groupValues?.get(1)
         ?: text.trim().takeIf { bareTokenPattern.matches(it) }
     return token?.lowercase()
-}
-
-// Mock data until the backend decision is made (Sprint 1).
-object MockData {
-    val profile = Profile(
-        displayName = "Alex Rivera",
-        bio = "Designer. Coffee first, conversation second.",
-        preferences = listOf("Text over calls", "Small groups", "Direct feedback"),
-        boundaries = listOf("No hugs without asking", "No photos"),
-        isPublic = true,
-    )
 }

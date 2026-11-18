@@ -7,6 +7,8 @@ import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.flow.Flow
 import java.io.IOException
 
@@ -54,11 +56,14 @@ fun authErrorMessage(code: AuthErrorCode?): String = when (code) {
  * All calls are suspending and may throw [io.github.jan.supabase.auth.exception.AuthRestException]
  * (and subtypes like weak-password / invalid-credentials). Callers should catch and surface a
  * friendly message. Sessions are persisted and auto-refreshed by the Auth plugin.
+ *
+ * Open so UI tests can swap in a fake that never talks to the server.
  */
-class AuthRepository(
+open class AuthRepository(
     client: io.github.jan.supabase.SupabaseClient? = null,
 ) {
-    private val auth by lazy { (client ?: SupabaseClientProvider.client).auth }
+    private val supabase by lazy { client ?: SupabaseClientProvider.client }
+    private val auth by lazy { supabase.auth }
 
     /** Emits the current session state (loading / authenticated / not authenticated). */
     val sessionStatus: Flow<SessionStatus> get() = auth.sessionStatus
@@ -118,5 +123,30 @@ class AuthRepository(
 
     suspend fun signOut() {
         auth.signOut()
+    }
+
+    /**
+     * Deletes the signed-in user's account and everything the database keeps for it, then drops
+     * the session on this device. Throws, leaving the user signed in, if the server delete fails.
+     */
+    open suspend fun deleteAccount() {
+        val userId = checkNotNull(currentUserId()) { "Not signed in" }
+        // Best effort, before the account goes: Storage policies only let the owner delete these.
+        runCatching { supabase.storage.from(AVATAR_BUCKET).delete(avatarPath(userId), cardImagePath(userId)) }
+        runCatching {
+            val covers = supabase.storage.from(EVENT_COVER_BUCKET)
+                .list(userId) { limit = MAX_COVERS }
+                .map { "$userId/${it.name}" }
+            if (covers.isNotEmpty()) supabase.storage.from(EVENT_COVER_BUCKET).delete(covers)
+        }
+        supabase.postgrest.rpc(DELETE_ACCOUNT_RPC)
+        // The user no longer exists, so a server sign-out would fail; clear the session locally.
+        auth.clearSession()
+    }
+
+    private companion object {
+        const val DELETE_ACCOUNT_RPC = "delete_my_account"
+        // shortcut: covers past this many stay in Storage; page through list() if hosts ever upload more.
+        const val MAX_COVERS = 1000
     }
 }

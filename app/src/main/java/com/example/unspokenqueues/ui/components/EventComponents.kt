@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.example.unspokenqueues.R
+import com.example.unspokenqueues.data.safeImage
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.EventPhase
@@ -173,9 +174,9 @@ fun EventCover(
             fontWeight = FontWeight.Bold,
             color = cue.onColor,
         )
-        if (coverUrl.isNotBlank()) {
+        safeImage(coverUrl)?.let { cover ->
             AsyncImage(
-                model = coverUrl,
+                model = cover,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
