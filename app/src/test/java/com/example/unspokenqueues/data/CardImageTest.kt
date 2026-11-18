@@ -1,6 +1,5 @@
 package com.example.unspokenqueues.data
 
-import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Profile
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -74,7 +73,7 @@ class CardImageTest {
     @Test
     fun profileUpsert_neverCarriesTheCardImage_soSavingAProfileCannotTouchIt() {
         val strict = Json { encodeDefaults = true }
-        val upsert = profile(cardImageUrl = "https://x/card.jpg").toUpsert("u1", CueStatus.GREEN)
+        val upsert = profile(cardImageUrl = "https://x/card.jpg").toUpsert("u1")
         val encoded = strict.encodeToString(ProfileUpsert.serializer(), upsert)
         assertFalse(encoded, encoded.contains("card_image"))
     }

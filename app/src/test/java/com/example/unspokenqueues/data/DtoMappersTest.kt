@@ -5,6 +5,7 @@ import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.ProfilePrivacy
 import kotlinx.serialization.json.Json
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -45,15 +46,15 @@ class DtoMappersTest {
     @Test
     fun profile_toUpsert_carriesAvatarUrl() {
         val profile = Profile("Sam", "bio", listOf("a"), listOf("b"), true, avatarUrl = "https://x.test/a.jpg")
-        val upsert = profile.toUpsert("u1", CueStatus.YELLOW)
+        val upsert = profile.toUpsert("u1")
         assertEquals("https://x.test/a.jpg", upsert.avatarUrl)
         assertEquals("u1", upsert.id)
-        assertEquals("YELLOW", upsert.status)
+        assertFalse(json.encodeToString(ProfileUpsert.serializer(), upsert).contains("\"status\""))
     }
 
     @Test
     fun profileUpsert_encodesAvatarUrlAsSnakeCase() {
-        val upsert = Profile("Sam", "", emptyList(), emptyList(), true, "https://x.test/a.jpg").toUpsert("u1", CueStatus.GREEN)
+        val upsert = Profile("Sam", "", emptyList(), emptyList(), true, "https://x.test/a.jpg").toUpsert("u1")
         val encoded = json.encodeToString(ProfileUpsert.serializer(), upsert)
         assert(encoded.contains("\"avatar_url\":\"https://x.test/a.jpg\"")) { encoded }
     }
@@ -90,7 +91,7 @@ class DtoMappersTest {
     fun profileUpsert_neverWritesOnboardingComplete() {
         // Saving a profile must not reset the flag, so the payload may not carry the column at all.
         val strict = Json { encodeDefaults = true }
-        val upsert = Profile("Sam", "bio", listOf("a"), listOf("b"), true).toUpsert("u1", CueStatus.GREEN)
+        val upsert = Profile("Sam", "bio", listOf("a"), listOf("b"), true).toUpsert("u1")
         val encoded = strict.encodeToString(ProfileUpsert.serializer(), upsert)
         assert(!encoded.contains("onboarding")) { encoded }
     }
@@ -195,7 +196,7 @@ class DtoMappersTest {
         // Saving a profile must not reset privacy settings, so the payload may not carry them.
         val strict = Json { encodeDefaults = true }
         val profile = Profile("Sam", "", emptyList(), emptyList(), true, privateMode = true, privacy = ProfilePrivacy(showBio = false))
-        val encoded = strict.encodeToString(ProfileUpsert.serializer(), profile.toUpsert("u1", CueStatus.GREEN))
+        val encoded = strict.encodeToString(ProfileUpsert.serializer(), profile.toUpsert("u1"))
         assert(!encoded.contains("private_mode") && !encoded.contains("show_")) { encoded }
     }
 }

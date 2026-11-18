@@ -28,7 +28,7 @@ Start with the symptom's boundary: local UI → repository/SDK → Auth/RLS/sche
 | Ended event still accepts direct membership | Actual membership policies | UI and join RPC checks are narrower than direct INSERT; see known issues |
 | Event “going” number wrong | Server memberships/trigger vs local estimates, old rows | Trigger is event-driven; bootstrap has no historical backfill; recount in a reviewed migration if needed |
 | Watch Waiting for phone | Debug IDs/certs, pairing/Play services, completed profile/onboarding, Sync now | Node connected alone does not prove companion delivery |
-| Watch local cue survives Sync now | Same publisher/revision with unchanged phone content | Designed deduplication; change phone content to publish a newer state |
+| Watch cue remains pending | Check connectivity, profile write, package ID and certificate | Open the phone and retry Sync now. A successful profile commit returns an operation receipt |
 | Watch stale after sign-out/private | Connection and accepted revision, publisher order | Offline cache cannot receive revocation; also tokens are not revoked server-side |
 | Watch cannot share | Valid 32-hex token and public profile in last accepted snapshot | Watch has no Auth/Storage/HTTP lookup fallback |
 

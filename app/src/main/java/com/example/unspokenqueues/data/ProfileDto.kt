@@ -35,10 +35,12 @@ data class ProfileRow(
     @SerialName("show_preferences") val showPreferences: Boolean = true,
     @SerialName("show_boundaries") val showBoundaries: Boolean = true,
     @SerialName("show_status") val showStatus: Boolean = true,
+    @SerialName("updated_at") val updatedAt: String = "",
 )
 
 /**
- * Payload used when inserting/updating a profile. Excludes server-managed columns.
+ * Editable profile fields only. The database gives a new row its default cue.
+ * Omitting status also preserves the committed cue when onboarding or editing an existing row.
  *
  * `onboarding_complete` is left out on purpose. This payload is sent on every profile edit, so
  * carrying the flag would reset it each time; without it an insert takes the column's default
@@ -54,7 +56,6 @@ data class ProfileUpsert(
     val preferences: List<String>,
     val boundaries: List<String>,
     @SerialName("is_public") val isPublic: Boolean,
-    val status: String,
     @SerialName("avatar_url") val avatarUrl: String,
 )
 
@@ -76,13 +77,12 @@ fun ProfileRow.toProfile(): Profile = Profile(
 fun ProfileRow.toCueStatus(): CueStatus =
     runCatching { CueStatus.valueOf(status) }.getOrDefault(CueStatus.GREEN)
 
-fun Profile.toUpsert(userId: String, status: CueStatus): ProfileUpsert = ProfileUpsert(
+fun Profile.toUpsert(userId: String): ProfileUpsert = ProfileUpsert(
     id = userId,
     displayName = displayName,
     bio = bio,
     preferences = preferences,
     boundaries = boundaries,
     isPublic = isPublic,
-    status = status.name,
     avatarUrl = avatarUrl,
 )

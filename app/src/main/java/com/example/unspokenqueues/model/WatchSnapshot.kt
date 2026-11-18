@@ -1,6 +1,9 @@
 package com.example.unspokenqueues.model
 
+import kotlinx.serialization.Serializable
+
 /** Minimal companion data. Never send account sessions, email, or backend credentials. */
+@Serializable
 data class WatchSnapshot(val active: Boolean, val status: String, val name: String,
                          val token: String, val isPublic: Boolean)
 

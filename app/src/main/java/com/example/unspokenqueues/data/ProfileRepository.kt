@@ -26,16 +26,24 @@ class ProfileRepository(
             limit(1)
         }.decodeSingleOrNull()
 
-    /** Creates or replaces the user's full profile row (including status). */
-    suspend fun upsertProfile(userId: String, profile: Profile, status: CueStatus) {
-        table().upsert(profile.toUpsert(userId, status))
+    /** Onboarding and card edits preserve the cue, including when the row already exists. */
+    suspend fun upsertProfile(userId: String, profile: Profile): Boolean {
+        val row = table().upsert(profile.toUpsert(userId)) {
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
     }
 
-    /** Updates only the status column for the user. */
-    suspend fun updateStatus(userId: String, status: CueStatus) {
-        table().update(mapOf("status" to status.name)) {
-            filter { eq("id", userId) }
-        }
+    /** A delayed PATCH can only modify the exact profile version that authorized it. */
+    suspend fun updateStatus(userId: String, status: CueStatus, expectedUpdatedAt: String): ProfileRow? {
+        require(expectedUpdatedAt.isNotBlank())
+        return table().update(mapOf("status" to status.name)) {
+            filter {
+                eq("id", userId)
+                eq("updated_at", expectedUpdatedAt)
+            }
+            select(Columns.list("id", "status", "updated_at", "is_public", "private_mode"))
+        }.decodeSingleOrNull()
     }
 
     /**
@@ -50,10 +58,12 @@ class ProfileRepository(
     }
 
     /** Updates only the public-visibility flag. */
-    suspend fun updateVisibility(userId: String, isPublic: Boolean) {
-        table().update(mapOf("is_public" to isPublic)) {
+    suspend fun updateVisibility(userId: String, isPublic: Boolean): Boolean {
+        val row = table().update(mapOf("is_public" to isPublic)) {
             filter { eq("id", userId) }
-        }
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
     }
 
     /** Updates only which fields people the user hasn't swapped with may see. */
@@ -72,10 +82,12 @@ class ProfileRepository(
     }
 
     /** Turns Private Mode on or off: hides the profile from everyone and pauses swaps while on. */
-    suspend fun updatePrivateMode(userId: String, on: Boolean) {
-        table().update(mapOf("private_mode" to on)) {
+    suspend fun updatePrivateMode(userId: String, on: Boolean): Boolean {
+        val row = table().update(mapOf("private_mode" to on)) {
             filter { eq("id", userId) }
-        }
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
     }
 
     /** Records that the user has finished onboarding, so they aren't taken through it again. */
@@ -85,7 +97,13 @@ class ProfileRepository(
         }
     }
 
+    private fun ProfileRow.allowsWatchSharing(userId: String): Boolean {
+        check(id == userId)
+        return isPublic && !privateMode
+    }
+
     private companion object {
+        val SHARING_COLUMNS = Columns.list("id", "is_public", "private_mode")
         const val TABLE = "profiles"
     }
 }

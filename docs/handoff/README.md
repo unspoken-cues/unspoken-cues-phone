@@ -20,7 +20,7 @@ The companion has a self-contained [Wear OS handoff](../../../unspoken-cues-wear
 
 ## Project in one paragraph
 
-Unspoken Cues lets a signed-in user select exactly one cue: Green (open to connect), Yellow (proceed with care), Red (please give me space), or Purple (maybe open to connect). The phone manages the profile, preferences, boundaries, events, and mutual S.W.A.P. card connections. Supabase supplies Auth, PostgREST/Postgres and Storage. The watch receives a small snapshot through Google Play services Data Layer, caches it and displays a cue or a profile QR. Watch choices currently stay on the watch.
+Unspoken Cues lets a signed-in user select exactly one cue: Green (open to connect), Yellow (proceed with care), Red (please give me space), or Purple (maybe open to connect). The phone manages the profile, preferences, boundaries, events, and mutual S.W.A.P. card connections. Supabase supplies Auth, PostgREST/Postgres and Storage. The watch receives a small snapshot through Google Play services Data Layer, caches it and displays a cue or a profile QR. Watch selections queue until the signed-in phone confirms the global cue with Supabase.
 
 ## What to trust
 

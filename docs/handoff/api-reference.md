@@ -32,13 +32,13 @@ All Auth methods use SDK APIs under the project's Auth service. Email/password i
 | Method | Database operation | Result/important exclusions |
 | --- | --- | --- |
 | `loadProfile(userId)` | SELECT all, `id = userId`, limit 1 | `ProfileRow?`; absent/invisible row is null |
-| `upsertProfile(userId,profile,status)` | UPSERT `ProfileUpsert` | Writes id, display_name, bio, preferences, boundaries, is_public, status, avatar_url |
-| `updateStatus(userId,status)` | UPDATE status where id matches | Uppercase enum name |
-| `updateVisibility(userId,isPublic)` | UPDATE is_public where id matches | Boolean |
+| `upsertProfile(userId,profile)` | UPSERT editable profile fields during onboarding or card editing | Leaves an existing cue untouched and returns effective sharing permission |
+| `updateStatus(userId,status,expectedUpdatedAt)` | UPDATE status where id and last-seen timestamp match | Returns the saved row or null on conflict. The coordinator confirms the row id and cue before issuing a receipt |
+| `updateVisibility(userId,isPublic)` and `updatePrivateMode(userId,on)` | UPDATE the visibility or private-mode field | Returns sharing permission from the saved row |
 | `updateCardImage(userId,url)` | UPDATE card_image_url where id matches | Empty string clears reference |
 | `markOnboardingComplete(userId)` | UPDATE onboarding_complete=true where id matches | One-way client operation |
 
-Partial updates do not select affected rows; an RLS-hidden/missing row can produce no changed row without an application error. Upsert deliberately excludes `onboarding_complete`, `card_image_url` and timestamps. Read DTO adds the two client-managed fields above; SQL also supplies creation/update timestamps ignored by the client. `ProfileRow.toCueStatus` falls back to GREEN for an unknown string. Local URI fields never cross the network.
+Other partial updates can omit affected rows; an RLS-hidden/missing row can produce no changed row without an application error. Upsert deliberately excludes `onboarding_complete`, `card_image_url` and timestamps. Read DTO adds the two client-managed fields above; Cue writes use the server-managed `updated_at` timestamp to detect concurrent changes. `ProfileRow.toCueStatus` falls back to GREEN for an unknown string. Local URI fields never cross the network.
 
 Example upsert shape (all values synthetic):
 
