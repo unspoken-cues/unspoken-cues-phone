@@ -88,8 +88,10 @@ import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.EventPhase
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.JOIN_CODE_MAX_LENGTH
 import com.example.unspokenqueues.model.MAX_TAGS_PER_EVENT
+import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.dayHeader
 import com.example.unspokenqueues.model.filterByTags
@@ -801,7 +803,8 @@ private fun PickRow(label: String, value: String, onClick: () -> Unit) {
  * attendee leaves it, the host deletes it for everyone. [status] is the viewer's own cue, which
  * colours the join QR's frame. [onEventChange] receives the event once it has changed (ended, or
  * a fresh going count); [onRemoved] is called once the viewer has left or deleted it. Other
- * attendees can be blocked or reported through [safety].
+ * attendees can be blocked or reported through [safety]. [mainProfile] is the viewer's own profile,
+ * shown as the fallback when they set a name, bio or cue just for this event.
  */
 @Composable
 fun EventDetailScreen(
@@ -816,11 +819,12 @@ fun EventDetailScreen(
     announcementRepo: AnnouncementRepository? = null,
     reactionRepository: ReactionRepository = remember { ReactionRepository() },
     profileVisibleForWaves: Boolean = false,
+    mainProfile: Profile? = null,
 ) {
     key(event.id, userId) {
         EventDetailContent(
             repo, safety, userId, status, event, onEventChange, onRemoved, onBack,
-            announcementRepo, reactionRepository, profileVisibleForWaves,
+            announcementRepo, reactionRepository, profileVisibleForWaves, mainProfile,
         )
     }
 }
@@ -838,6 +842,7 @@ private fun EventDetailContent(
     announcementRepo: AnnouncementRepository?,
     reactionRepository: ReactionRepository,
     profileVisibleForWaves: Boolean,
+    mainProfile: Profile?,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -861,6 +866,11 @@ private fun EventDetailContent(
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    val participant = isHost || (membershipLoaded && rsvp != null)
+    // The viewer's own override for this event; null until it has loaded once.
+    var eventProfile by remember { mutableStateOf<EventProfile?>(null) }
+    var eventProfileTried by remember { mutableStateOf(false) }
+    var editingEventProfile by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // Compose's clipboard rather than the system service, so a test can swap in a fake one.
     val clipboard = LocalClipboard.current
@@ -885,6 +895,19 @@ private fun EventDetailContent(
             throw e
         } catch (e: Exception) {
             // The page works without either; the RSVP buttons just start unselected.
+        }
+    }
+
+    LaunchedEffect(event.id, participant, reload) {
+        if (!participant) return@LaunchedEffect
+        try {
+            eventProfile = repo.myEventProfile(event.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Keep any earlier answer; the section says so if there never was one.
+        } finally {
+            eventProfileTried = true
         }
     }
 
@@ -1103,10 +1126,14 @@ private fun EventDetailContent(
             )
         }
 
-        if (isHost || (membershipLoaded && rsvp != null)) {
+        if (participant) {
+            EventProfileSection(eventProfile, eventProfileTried, mainProfile?.displayName.orEmpty()) { editingEventProfile = true }
             EventAnnouncements(event, userId, announcements)
-            key(waveRefreshAfterBlock) {
-                EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+            // Waves wait for the event cue so local eligibility matches the server's check.
+            if (eventProfileTried) {
+                key(waveRefreshAfterBlock) {
+                    EventReactionsSection(reactionRepository, event, userId, eventProfile?.status ?: status, profileVisibleForWaves)
+                }
             }
         }
 
@@ -1151,6 +1178,21 @@ private fun EventDetailContent(
             dismissButton = { TextButton({ confirmingEnd = false }) { Text("Cancel") } },
         )
     }
+    if (editingEventProfile) {
+        EventProfileDialog(
+            current = eventProfile ?: EventProfile(),
+            mainName = mainProfile?.displayName.orEmpty(),
+            mainBio = mainProfile?.bio.orEmpty(),
+            mainStatus = status,
+            onSave = {
+                eventProfile = repo.saveEventProfile(event.id, it)
+                editingEventProfile = false
+                // The viewer's own attendee row now shows the event values.
+                reload++
+            },
+            onDismiss = { editingEventProfile = false },
+        )
+    }
     blocking?.let { person ->
         ConfirmBlockDialog(person.name, onConfirm = { block(person) }, onDismiss = { blocking = null })
     }
@@ -1187,6 +1229,28 @@ private fun EventDetailContent(
             },
             dismissButton = { TextButton({ confirmingRemove = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** Entry to the event profile editor, saying what others at this event see. */
+@Composable
+private fun EventProfileSection(profile: EventProfile?, tried: Boolean, mainName: String, onEdit: () -> Unit) {
+    SectionCard(title = "Your profile at this event") {
+        Text(
+            when {
+                profile == null && tried -> "Couldn't load your profile for this event. Refresh to try again."
+                profile == null -> "Loading…"
+                profile == EventProfile() -> "You appear with your main profile. You can set a different name, bio or cue just for this event."
+                else -> listOfNotNull(
+                    "Here you appear as ${profile.displayName ?: mainName}",
+                    profile.status?.let { "with a ${it.label} cue" },
+                ).joinToString(" ") + ". Anything you haven't set uses your main profile."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedButton(onEdit, Modifier.fillMaxWidth().height(52.dp), enabled = profile != null) {
+            Text("Edit profile for this event")
+        }
     }
 }
 

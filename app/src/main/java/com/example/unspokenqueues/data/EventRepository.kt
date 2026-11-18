@@ -2,6 +2,7 @@ package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.generateJoinCode
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -151,6 +152,27 @@ open class EventRepository(
             .decodeList<AttendeeRow>()
             .map { it.toAttendee() }
 
+    /** The signed-in user's own override for an event they host or joined; empty when there is none. */
+    open suspend fun myEventProfile(eventId: String): EventProfile =
+        postgrest.rpc(MY_EVENT_PROFILE_RPC, buildJsonObject { put("p_event_id", eventId) })
+            .decodeAs<EventProfileRow>()
+            .toEventProfile()
+
+    /**
+     * Replaces the signed-in user's override for an event and returns what the server saved. Null
+     * fields use the main profile; an empty [profile] removes the override.
+     */
+    open suspend fun saveEventProfile(eventId: String, profile: EventProfile): EventProfile =
+        postgrest.rpc(
+            SET_EVENT_PROFILE_RPC,
+            buildJsonObject {
+                put("p_event_id", eventId)
+                put("p_display_name", profile.displayName)
+                put("p_bio", profile.bio)
+                put("p_status", profile.status?.name)
+            },
+        ).decodeAs<EventProfileRow>().toEventProfile()
+
     /**
      * Joins the active event with this code as the signed-in user and returns it. Throws a
      * PostgrestRestException whose code [joinFailureMessage] understands if no active event has
@@ -244,6 +266,8 @@ open class EventRepository(
         private const val MEMBERS = "event_members"
         private const val JOIN_RPC = "join_event_by_code"
         private const val ATTENDEES_RPC = "event_attendees"
+        private const val MY_EVENT_PROFILE_RPC = "my_event_profile"
+        private const val SET_EVENT_PROFILE_RPC = "set_event_profile"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.
