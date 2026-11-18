@@ -26,7 +26,7 @@ Foreign keys reference `auth.users`; deleting an Auth user cascades profiles, to
 | `swaps` | user_a/user_b UUID; created_at=now | Composite PK; check user_a < user_b; both Auth FKs; index user_b |
 | `card_tokens` | user_id UUID; token text default UUID without hyphens; created_at=now | user_id PK/FK; token unique |
 | `events` | id random UUID; host_id default auth.uid(); required name/join_code; details empty; active=true; created_at=now; starts_at/ends_at nullable timestamptz; location/cover_url/host_name empty; tags empty text array; is_public=false; going_count=0 | id PK; join_code unique; host Auth FK; host_id, starts_at indexes; partial is_public index |
-| `event_members` | event_id/user_id UUID; joined_at=now; rsvp='going' | Composite PK/FKs; rsvp check in ('going','maybe'); user_id index |
+| `event_members` | event_id/user_id UUID; joined_at=now; rsvp='going'; cued_in=true (see [event directory](event-directory.md)) | Composite PK/FKs; rsvp check in ('going','maybe'); user_id index |
 
 There is no schema constraint requiring an event name to be nonblank, end to follow start, tags to have the UI's length/count, or a join code to match the UI alphabet. There is no expiry/rotation column for card tokens. Profile preference/boundary and bio requirements are UI rules. Preserve these distinctions when adding another client.
 

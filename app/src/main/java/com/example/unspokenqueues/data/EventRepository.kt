@@ -152,6 +152,17 @@ open class EventRepository(
             .map { it.toAttendee() }
 
     /**
+     * Cues the signed-in member in to (or out of) the event's attendee list. Cued out, they stay a
+     * member but only the host sees them, and they have no waves. Throws if they aren't a member.
+     */
+    open suspend fun setCuedIn(eventId: String, cuedIn: Boolean) {
+        postgrest.rpc(CUED_IN_RPC, buildJsonObject {
+            put("p_event_id", eventId)
+            put("p_cued_in", cuedIn)
+        })
+    }
+
+    /**
      * Joins the active event with this code as the signed-in user and returns it. Throws a
      * PostgrestRestException whose code [joinFailureMessage] understands if no active event has
      * that code. Joining an event twice is harmless.
@@ -244,6 +255,7 @@ open class EventRepository(
         private const val MEMBERS = "event_members"
         private const val JOIN_RPC = "join_event_by_code"
         private const val ATTENDEES_RPC = "event_attendees"
+        private const val CUED_IN_RPC = "set_event_cued_in"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.

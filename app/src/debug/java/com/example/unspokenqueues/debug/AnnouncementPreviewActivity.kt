@@ -114,6 +114,7 @@ private class AnnouncementSample(private val safety: PreviewSafetyRepository) {
         override suspend fun endEvent(eventId: String) { event = event.copy(active = false) }
         override suspend fun deleteEvent(eventId: String) { rows.clear() }
         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
+        override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) = Unit
     }
     val announcements = object : AnnouncementRepository() {
         override suspend fun announcements(eventId: String): List<Announcement> = announcementFeed(rows)

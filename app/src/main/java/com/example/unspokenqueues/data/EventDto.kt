@@ -80,6 +80,8 @@ data class AttendeeRow(
     val preferences: List<String> = emptyList(),
     val boundaries: List<String> = emptyList(),
     val status: String? = null,
+    // Missing from a server without the event directory migration, where everyone is listed.
+    @SerialName("cued_in") val cuedIn: Boolean = true,
 )
 
 /** An attendee row as an attendee. A status the app doesn't know reads as hidden. */
@@ -88,4 +90,5 @@ fun AttendeeRow.toAttendee(): Attendee = Attendee(
     // isPublic isn't sent: someone else's visibility setting is none of the viewer's business.
     profile = Profile(displayName, bio, preferences, boundaries, isPublic = false, avatarUrl = avatarUrl),
     status = CueStatus.entries.firstOrNull { it.name == status },
+    cuedIn = cuedIn,
 )

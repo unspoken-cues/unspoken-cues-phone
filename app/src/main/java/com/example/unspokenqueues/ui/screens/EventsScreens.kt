@@ -69,6 +69,8 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -845,6 +847,8 @@ private fun EventDetailContent(
     val phase = event.phase(now)
     // Null until the first load answers.
     var attendees by remember { mutableStateOf<List<Attendee>?>(null) }
+    // The viewer's own row, which only a member has: it carries their Cue In / Cue Out choice.
+    val me = attendees?.firstOrNull { it.userId == userId }
     var loadFailed by remember { mutableStateOf(false) }
     // Bumped to load the attendee list again.
     var reload by remember { mutableIntStateOf(0) }
@@ -913,6 +917,13 @@ private fun EventDetailContent(
         val delta = (if (choice == Rsvp.GOING) 1 else 0) - (if (wasGoing) 1 else 0)
         if (delta != 0) onEventChange(event.copy(goingCount = (event.goingCount + delta).coerceAtLeast(0)))
         reload++
+    }
+
+    fun cue(cuedIn: Boolean) = perform(
+        "Couldn't ${if (cuedIn) "cue you in" else "cue you out"}. Check your connection and try again.",
+    ) {
+        repo.setCuedIn(event.id, cuedIn)
+        attendees = attendees?.map { if (it.userId == userId) it.copy(cuedIn = cuedIn) else it }
     }
 
     fun end() = perform("Couldn't end the event. Check your connection and try again.") {
@@ -1103,10 +1114,33 @@ private fun EventDetailContent(
             )
         }
 
+        me?.let { self ->
+            SectionCard(title = "Event directory") {
+                Text(
+                    if (self.cuedIn) "You're cued in: attendees can see you here and wave."
+                    else "You're cued out: only the host sees you. Your RSVP and updates stay.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val label = if (self.cuedIn) "Cue Out" else "Cue In"
+                OutlinedButton(
+                    { cue(!self.cuedIn) },
+                    Modifier.fillMaxWidth().height(52.dp).semantics {
+                        contentDescription = if (self.cuedIn) "$label: hide me from this event's attendee list"
+                        else "$label: show me on this event's attendee list"
+                    },
+                    enabled = !working,
+                ) { Text(label) }
+            }
+        }
+
         if (isHost || (membershipLoaded && rsvp != null)) {
             EventAnnouncements(event, userId, announcements)
-            key(waveRefreshAfterBlock) {
-                EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+            // Waves are discoverability, so a cued-out member has none (the server refuses them too).
+            if (me?.cuedIn != false) {
+                key(waveRefreshAfterBlock) {
+                    EventReactionsSection(reactionRepository, event, userId, status, profileVisibleForWaves)
+                }
             }
         }
 
@@ -1205,6 +1239,9 @@ private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() 
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             status?.let { StatusLabel(it) }
+            if (!person.cuedIn) {
+                Text("Cued out", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         if (onBlock != null) {
             Box {

@@ -53,6 +53,11 @@ private class FakeEventRepository(
     val ended = mutableListOf<String>()
     val left = mutableListOf<Pair<String, String>>()
     val deleted = mutableListOf<String>()
+    val cued = mutableListOf<Pair<String, Boolean>>()
+
+    override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) {
+        cued += eventId to cuedIn
+    }
 
     override suspend fun createEvent(hostId: String, draft: EventDraft): Event =
         Event(
@@ -302,6 +307,45 @@ class EventsScreenTest {
         listOf("Gia Green", "Yan Yellow", "Rae Red", "Pat Purple").forEach {
             compose.onNodeWithText(it).performScrollTo().assertIsDisplayed()
         }
+    }
+
+    // ---------- Cue In / Cue Out ----------
+
+    @Test
+    fun member_canCueOut_andBackIn_whichHidesAndRestoresWaves() {
+        val repo = FakeEventRepository(attendees = everyone.take(2))
+        showDetail(repo, userId = "green")
+        val waves = compose.onNodeWithText("Refresh waves")
+        waves.performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("Cue Out: hide me from this event's attendee list")
+            .performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("e1" to false), repo.cued)
+        compose.onNodeWithText("You're cued out", substring = true).performScrollTo().assertIsDisplayed()
+        // Their own row says so; only they and the host ever see it.
+        compose.onNodeWithText("Cued out").performScrollTo().assertIsDisplayed()
+        waves.assertDoesNotExist()
+
+        compose.onNodeWithContentDescription("Cue In: show me on this event's attendee list")
+            .performScrollTo().performClick()
+        compose.waitForIdle()
+
+        assertEquals(listOf("e1" to false, "e1" to true), repo.cued)
+        compose.onNodeWithText("Cued out").assertDoesNotExist()
+        compose.onNodeWithText("Refresh waves").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun host_seesCuedOutMembersMarked_andHasNoSwitch() {
+        val cuedOut = everyone.first().copy(cuedIn = false)
+        showDetail(FakeEventRepository(attendees = listOf(cuedOut) + everyone.drop(1)), userId = "host")
+
+        compose.onNodeWithText("Gia Green").assertIsDisplayed()
+        compose.onNodeWithText("Cued out").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Cue Out").assertDoesNotExist()
+        compose.onNodeWithText("Cue In").assertDoesNotExist()
     }
 
     @Test

@@ -57,6 +57,7 @@ class ReactionPreviewActivity : ComponentActivity() {
                         override suspend fun event(eventId: String): Event? = null
                         override suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) = Unit
                         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
+                        override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) = Unit
                     }
                 }
                 val announcements = remember {

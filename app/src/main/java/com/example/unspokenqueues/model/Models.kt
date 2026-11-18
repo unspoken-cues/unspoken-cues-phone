@@ -76,7 +76,8 @@ data class ProfilePrivacy(
 
 // Someone who has joined an event. userId is their account id. status is null when they hide
 // their cue color from the viewer. The server leaves out anyone the viewer may not see.
-data class Attendee(val userId: String, val profile: Profile, val status: CueStatus?) {
+// cuedIn is false only on the viewer's own row or, for the host, a member who cued out.
+data class Attendee(val userId: String, val profile: Profile, val status: CueStatus?, val cuedIn: Boolean = true) {
     val name get() = profile.displayName
 }
 
