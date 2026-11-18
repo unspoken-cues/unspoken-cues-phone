@@ -14,7 +14,7 @@ The app tolerates an unmigrated backend for reads (a missing `cued_in` reads as 
 - `set_event_cued_in(p_event_id, p_cued_in)`: authenticated, SECURITY DEFINER, empty search path. Updates only `cued_in` on the caller's own row (`auth.uid()`); there is no target-user parameter. Not a member, including a host who never joined: `42501`. Null: `22023`. Signed out: `28000`. It takes the same event row lock as `send_event_wave`, so a send cannot race a Cue Out.
 - `event_attendees(p_event_id)` returns a new last column `cued_in`. Other attendees never get a cued-out member's row. The host gets it, with `cued_in = false`; the member always gets their own row. Lines changed for this feature carry a `-- directory:` comment.
 - `event_wave_participant` requires `cued_in` for members (the host-by-`host_id` branch is unchanged). That single change means a cued-out member is no wave target, cannot send or be sent a wave, their earlier waves drop out of other inboxes, and `event_wave_state` / `set_event_wave_preference` refuse them with `42501`. Cueing back in restores earlier waves (the one-wave-per-pair limit still holds).
-- The "Members can read co-members" RLS policy hides cued-out rows from other members reading `event_members` directly. The host policy is unchanged.
+- Direct reads of `event_members` return only the caller's own rows (see [hardening](hardening.md)), so no other member, cued in or out, is visible there.
 
 The existing "Members can update own rsvp" policy still lets a member update any column of their own row directly, including `cued_in`. That stays self-only; the RPC is the path the app uses.
 
@@ -41,4 +41,4 @@ Validation on 2026-11-17 (Windows): `assembleDebug testDebugUnitTest compileDebu
 
 ## Rollback
 
-Roll back clients first; older clients ignore the extra column. Leaving the schema in place is safe. To remove it, in one transaction: drop `set_event_cued_in(uuid, boolean)`; drop and recreate `event_attendees(uuid)` and `event_wave_participant(uuid, uuid)` from section 16 / section 18 (or the 202611170002 migration); recreate the "Members can read co-members" policy as `using (public.is_event_member(event_id))`; then `alter table public.event_members drop column cued_in`. Dropping the column makes every cued-out member visible again.
+Roll back clients first; older clients ignore the extra column. Leaving the schema in place is safe. To remove it, in one transaction: drop `set_event_cued_in(uuid, boolean)`; drop and recreate `event_attendees(uuid)` and `event_wave_participant(uuid, uuid)` from section 16 / section 18 (or the 202611170002 migration); then `alter table public.event_members drop column cued_in`. Dropping the column makes every cued-out member visible again.

@@ -13,7 +13,7 @@ An unmigrated backend makes the "Your profile at this event" section say it coul
 `event_profiles` holds one optional row per (event, user): `display_name`, `bio` and `status`, each nullable (null = main profile). It has RLS, no policies, and all privileges revoked from PUBLIC, anon and authenticated. Clients use two authenticated SECURITY DEFINER RPCs with `search_path = ''`:
 
 - `my_event_profile(p_event_id)`: the caller's own override fields. There is no parameter for another user, so nobody can read someone else's raw row.
-- `set_event_profile(p_event_id, p_display_name, p_bio, p_status)`: replaces the caller's override. Values are trimmed. A blank or null field clears that field, and clearing all three deletes the row. The bio is limited to 120 characters, the app's main-bio limit (`22023` above that). Like the main profile, a name has no server length limit.
+- `set_event_profile(p_event_id, p_display_name, p_bio, p_status)`: replaces the caller's override. Values are trimmed. A blank or null field clears that field, and clearing all three deletes the row. The bio is limited to 120 characters, the app's main-bio limit (`22023` above that). A name is limited to 80 characters, like the main profile (`23514` above that; see [hardening](hardening.md)).
 
 Both RPCs require `auth.uid()` to be the host or a member (`event_wave_participant`). Otherwise they raise `42501`. `set_event_profile` takes a key-share lock on the caller's membership row, so a concurrent leave cannot slip past. It also locks the caller's profile row, which serializes an event-cue change with `send_event_wave`'s profile locks.
 

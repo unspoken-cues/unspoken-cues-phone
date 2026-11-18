@@ -15,7 +15,7 @@ erDiagram
     EVENTS ||--o{ EVENT_MEMBERS : contains
 ```
 
-Foreign keys reference `auth.users`; deleting an Auth user cascades profiles, tokens, swaps, hosted events and memberships. Deleting an event cascades its memberships. Storage objects are not covered by these public-table cascades. There is no account-deletion flow in the app.
+Foreign keys reference `auth.users`; deleting an Auth user cascades profiles, tokens, swaps, hosted events and memberships. Deleting an event cascades its memberships. Storage objects are not covered by these public-table cascades. `delete_my_account()` deletes the caller's Auth user; reports they filed keep a null reporter (see [hardening](hardening.md)).
 
 ## Data dictionary
 
@@ -28,7 +28,7 @@ Foreign keys reference `auth.users`; deleting an Auth user cascades profiles, to
 | `events` | id random UUID; host_id default auth.uid(); required name/join_code; details empty; active=true; created_at=now; starts_at/ends_at nullable timestamptz; location/cover_url/host_name empty; tags empty text array; is_public=false; going_count=0 | id PK; join_code unique; host Auth FK; host_id, starts_at indexes; partial is_public index |
 | `event_members` | event_id/user_id UUID; joined_at=now; rsvp='going'; cued_in=true (see [event directory](event-directory.md)) | Composite PK/FKs; rsvp check in ('going','maybe'); user_id index |
 
-There is no schema constraint requiring an event name to be nonblank, end to follow start, tags to have the UI's length/count, or a join code to match the UI alphabet. There is no expiry/rotation column for card tokens. Profile preference/boundary and bio requirements are UI rules. Preserve these distinctions when adding another client.
+There is no schema constraint requiring an event name to be nonblank, end to follow start, tags to have the UI's length/count, or a join code to match the UI alphabet. There is no expiry/rotation column for card tokens. Requiring a preference or boundary is a UI rule; the server only caps sizes (name 80, bio 120, at most 20 list items of 60 characters; see [hardening](hardening.md)). Preserve these distinctions when adding another client.
 
 ## Functions and triggers
 
@@ -54,13 +54,13 @@ These are the policies in the script, subject to the environment's table grants 
 
 | Table | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
-| profiles | Owner, any public row, or a swap partner's row | Own id | Own row/id | Own row |
-| swaps | Either participant | No direct policy; RPC inserts | No policy | Either participant |
+| profiles | Owner only; others through `binder_cards()` / `event_attendees()` | Own id | Own row/id | Own row |
+| swaps | Either participant, while not expired | No direct policy; RPC inserts | No policy | Either participant |
 | card_tokens | Owner only | No direct policy; RPC creates | No policy | No policy |
 | events | Host, member, or authenticated reader of a public event | Own host_id | Host | Host |
-| event_members | Co-member or event host | Authenticated caller as own user_id | Authenticated caller's own membership | Own membership |
+| event_members | Own rows only; others through `event_attendees()` | Authenticated caller as own user_id | Authenticated caller's own membership | Own membership |
 
-The public-profile read policy has no `TO authenticated` restriction; it is public subject to grants. Existing swap partners retain private-profile access. Event membership does **not** itself grant profile-row access. Consequently a host may read all membership IDs but only some profiles. `visibleAttendees` hides Red/Purple from ordinary viewers in UI only; SQL does not implement cue-dependent profile visibility.
+Other people's profiles and memberships are read only through the SECURITY DEFINER functions `binder_cards()` and `event_attendees()`, which apply Private Mode, blocks, `is_public`, the `show_*` toggles, Cue Out and (for non-hosts) the Green/Yellow cue rule.
 
 Direct membership INSERT checks only user_id, plus normal FK constraints. It does not require proof of code possession, public visibility, host approval, active status or a valid schedule. Do not treat a hidden code or UI-disabled RSVP button as a server access rule. See [known issues](known-issues.md).
 
@@ -70,7 +70,7 @@ Direct membership INSERT checks only user_id, plus normal FK constraints. It doe
 
 The schema creates two public buckets: `avatars` and `event-covers`; reapplying it sets `public=true` on existing matching buckets. For each bucket it adds SELECT for its objects and authenticated INSERT/UPDATE/DELETE only when the object's first folder equals `auth.uid()::text`. UPDATE checks both existing and resulting path. Clients choose paths under the signed-in UUID.
 
-Avatar/card paths are overwritten; timestamp query strings invalidate image caches. Covers use new versioned filenames. Images are public independently of the row that references them. Clearing a row URL, deleting an event or setting a profile private does not revoke an already known image URL. No object retention/cleanup job, size quota configuration or server content validation is defined here.
+Avatar/card paths are overwritten; timestamp query strings invalidate image caches. Covers use new versioned filenames. Images are public independently of the row that references them. Clearing a row URL, deleting an event or setting a profile private does not revoke an already known image URL. Both buckets accept only `image/jpeg` up to 5 MB (`file_size_limit`, `allowed_mime_types`). No object retention/cleanup job is defined here.
 
 ## Schema change workflow
 
