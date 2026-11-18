@@ -197,8 +197,9 @@ class SettingsScreenTest {
         askToDelete()
         compose.onNodeWithText("Delete").performClick()
 
+        // The dialog stays open with the error, so the user can retry or cancel.
         compose.onNodeWithText("Couldn't delete your account", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Delete your account?").assertDoesNotExist()
+        compose.onNodeWithText("Delete your account?").assertIsDisplayed()
         assertEquals(1, account.deletes)
         assertEquals(emptyList<String>(), clicks)
     }

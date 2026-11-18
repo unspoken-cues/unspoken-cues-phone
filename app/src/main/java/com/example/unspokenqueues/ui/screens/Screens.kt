@@ -1479,26 +1479,28 @@ private fun DeleteAccountButton(account: AuthRepository, onDeleted: () -> Unit) 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                confirming = false
+                // Shown inside the dialog: below the button it would land off-screen.
                 error = "Couldn't delete your account. Check your connection and try again."
             } finally {
                 deleting = false
             }
         }
     }
-    TextButton({ confirming = true }, Modifier.fillMaxWidth(), enabled = !deleting) {
+    TextButton({ error = null; confirming = true }, Modifier.fillMaxWidth(), enabled = !deleting) {
         Text("Delete account", color = MaterialTheme.colorScheme.error)
     }
-    error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     if (confirming) {
         AlertDialog(
             onDismissRequest = { if (!deleting) confirming = false },
             title = { Text("Delete your account?") },
             text = {
-                Text(
-                    "This permanently deletes your profile, your S.W.A.P. card and photos, your binder, " +
-                        "the events you host and your event memberships. It can't be undone.",
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This permanently deletes your profile, your S.W.A.P. card and photos, your binder, " +
+                            "the events you host and your event memberships. It can't be undone.",
+                    )
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             },
             confirmButton = {
                 TextButton(::delete, enabled = !deleting) {
