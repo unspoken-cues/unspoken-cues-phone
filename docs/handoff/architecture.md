@@ -25,6 +25,11 @@ flowchart TD
     Listener --> Store[WatchStore SharedPreferences]
     Store --> WatchUI[WatchApp]
     WatchUI --> Store
+    Store --> Data
+    Data --> Job[PhoneCueListener / PhoneCueJob]
+    Job --> Coordinator[PhoneCueSync]
+    Sync --> Coordinator
+    Coordinator --> Repo
 ```
 
 This is a Kotlin/Jetpack Compose application with thin repositories and root-owned state. It does **not** currently use ViewModels, a dependency injection framework, Navigation Compose, Room, WorkManager, a custom HTTP server or Supabase Realtime subscriptions. Do not assume those layers exist when tracing a bug. Each project contains one Android application module; the shared watch contract is duplicated in source rather than supplied by a shared library.
@@ -71,7 +76,7 @@ There are no web routes for profiles or events. Card links and password recovery
 | Profile object, binder cards, most results/errors | `remember` | Lost on composition/process recreation; fetched again where effects exist |
 | Theme and `onboarded_<uid>` | Phone `settings` SharedPreferences | Theme device-wide; onboarding per account |
 | `watch_owner` | Phone `settings` | Last account whose active DataItem was successfully submitted locally |
-| Watch publisher fields, revision and generation | Phone `watch_publisher` preferences | Reused across app restarts; explicitly excluded from backup/transfer |
+| Watch publisher fields, confirmed cue, pending write, receipt and account generation | Phone `watch_publisher` preferences | Reused across app restarts; explicitly excluded from backup/transfer |
 | Memberships, events, swaps, card tokens | Supabase tables | Explicit repository queries; no live subscriptions |
 | Uploaded JPEGs | Public Storage buckets | URL stored in profile/event; Coil loads it only if `safeImage` finds it under this project's public Storage path |
 | Watch cue/profile/lock/order metadata | Watch `watch_state` preferences | Survives restarts/disconnection; backups excluded |
@@ -82,7 +87,7 @@ Binder loads on sign-in while Cue or Binder is selected, and whenever switching 
 
 Calls run in Compose coroutine scopes/effects; repository methods generally throw. Image decoding/compression explicitly runs on `Dispatchers.IO`. SDK calls are suspending. Structured cancellation is rethrown in many form/event paths; several root callbacks instead use `runCatching` and discard errors.
 
-Cue selection, profile visibility and profile edits update local state immediately. Their server writes have no user-visible failure/rollback and no durable retry queue. Profile image uploads complete before `onSave`, but the profile and card-image database updates then run as separate best-effort calls. Binder removal is optimistic and restores the captured list if deletion throws. Event create/join/RSVP/end/delete/leave expose errors and gate most duplicate work. Watch publishing has its own repeated delivery attempt; this does not retry failed database writes.
+Phone cue selection updates the confirmed state after the profile write. The cue journal and paired watch outbox support retry after interruption. Profile visibility updates optimistically and reverts when saving fails. Profile image uploads complete before `onSave`, but the profile and card-image database updates then run as separate best-effort calls. Binder removal is optimistic and restores the captured list if deletion throws. Event create/join/RSVP/end/delete/leave expose errors and gate most duplicate work. Watch input retries through the phone’s network-constrained Android job and foreground sync loop.
 
 These differences matter when a UI looks successful but a relaunch restores an older server value. There is no general cross-device conflict resolution or optimistic version field for profiles. For reliable future changes, define when a save is acknowledged, whether local data rolls back, and how errors/retries are presented.
 

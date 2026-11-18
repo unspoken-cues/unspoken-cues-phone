@@ -1,60 +1,39 @@
-# Phone ↔ Wear OS contract
+# Phone and Wear OS cue sync
 
-Return to the [handoff index](README.md). Despite the bidirectional heading, **implemented transport is phone-to-watch only**. The watch does not send cue choices back to the phone or Supabase.
+The paired watch can select any of the four global cues. The signed-in phone owns the Supabase write. Both devices display the committed global cue after the phone returns its receipt. Event-specific cues use their existing event profile.
 
-Phone sources: [WatchSync.kt](../../app/src/main/java/com/example/unspokenqueues/data/WatchSync.kt), [WatchSnapshot.kt](../../app/src/main/java/com/example/unspokenqueues/model/WatchSnapshot.kt), root wiring in [MainActivity.kt](../../app/src/main/java/com/example/unspokenqueues/MainActivity.kt). Receiver/storage details are also documented in the [companion handoff](../../../unspoken-cues-wearos/docs/handoff/README.md).
+## Using it
 
-## Transport and identity
+Pair the devices, sign in on the phone and finish onboarding. On the watch, open **Options → Color locked → Unlock color** and select a cue. The watch saves its pending choice before sending it. A phone selection or **Settings → Watch → Sync now** also enters the same reconciliation path. Sync now reads the latest retained watch request, checks the profile and sends a fresh authoritative snapshot even for an unchanged cue.
 
-Google Play services Wearable DataClient stores an urgent DataItem at the exact path `/unspoken-cues/state`. This is a latest-state snapshot, not a command/event history. There is no app-level acknowledgment, message endpoint, capability discovery or backend token on the watch.
+The phone connection pill reports connected Data Layer nodes. Settings reports profile confirmation or retry status separately. A successful DataClient submission may still be awaiting delivery to the other device.
 
-Current debug IDs both resolve to `com.example.unspokenqueues`. Both APKs must have matching signing certificates. The watch namespace is still `com.unspokencues.wear`; use the installed package ID for adb and the namespace for the activity class. Current release IDs differ (phone `com.example.unspokenqueues`, watch `com.unspokencues.wear`), and older product notes want phone `com.unspokencues.phone`. A coordinated shared application ID and signing decision is a release blocker. Changing only namespace does not solve transport identity.
+## Transport
 
-## Schema 1 DataMap
+Google Play services retains the latest urgent DataItem per path and originating node. Requests use `/unspoken-cues/cue-request`. The schema is integer 1. Each request has a random account-generation UUID, a positive long `baseRevision`, a random `operation` UUID, a persistent random watch `writer` UUID, a positive long `sequence` and the exact `status` name GREEN, YELLOW, RED or PURPLE. Unknown schemas, paths, missing metadata, invalid types and unknown cue names cannot initiate a phone write.
 
-| Key | DataMap type | Meaning |
-| --- | --- | --- |
-| `schema` | Int | Exactly 1; unsupported versions ignored |
-| `active` | Boolean | Account state available; false is an explicit clear |
-| `status` | String | Exact GREEN/YELLOW/RED/PURPLE when active; empty on clear |
-| `name` | String | Display name, limited to 80 characters |
-| `token` | String | Lowercase 32-hex card token only when public and valid; otherwise empty |
-| `public` | Boolean | Profile sharing flag; false on clear |
-| `revision` | Long | Positive monotonic state revision within a publisher generation |
-| `publisher` | String | UUID for this phone installation's publishing generation |
+The phone answers on the existing `/unspoken-cues/state` path. Older receivers can read the original fields.
 
-Only cue/name/card token/visibility travel. No user email, account UUID, session, password, preferences, boundaries, photos or Supabase credential is sent. The token is still a sharing capability, not non-sensitive decoration.
+| Snapshot keys | Meaning |
+| --- | --- |
+| `schema`, `active`, `status` | Integer 1, account availability flag and global cue. A signed-out snapshot clears identity. |
+| `name`, `token`, `public` | At most 80 characters of display name, valid 32-hex public card token or empty string, sharing flag. Private Mode withholds the token. |
+| `publisher`, `revision` | Installation UUID and monotonic positive transport revision. The existing publisher identity and counter survive upgrades. |
+| `generation`, `cueRevision` | Random identity for this signed-in account session and positive logical cue revision. Inactive snapshots use an empty string and zero. |
+| `receipt`, `receiptWriter`, `receiptBase`, `receiptSequence` | Last accepted operation UUID, writer UUID, originating base and sequence. A phone selection clears these fields. Empty receipt fields are empty strings and zero longs. |
 
-## Snapshot gating
+Request metadata contains no profile identifier, credentials or sharing capability. Only the existing privacy-filtered snapshot carries profile sharing data. A disconnected watch retains its previous snapshot until the next delivery. Clearing the cache does not revoke an already shared card token.
 
-Before the session has a definite answer, the root passes null and publishes nothing. A definite signed-out session produces an inactive empty snapshot. An authenticated account publishes active data only after its profile has loaded for `sessionUserId` and onboarding is complete. Missing/invalid token withholds sharing but does not withhold the cue.
+## Conflicts and recovery
 
-During profile loading, if the confirmed account differs from persisted `watch_owner`, an empty snapshot clears the previous identity. Same-account loading passes null to preserve an offline watch cache. `watch_owner` records successful DataClient submission of an active snapshot, not proof that the watch received it. Publishing never intentionally uses a previous account/mock profile while waiting for session/profile confirmation.
+The phone serializes cue writes and authoritative reads. The watch generation must match the signed-in account and the base revision must still be current. The same watch can replace an earlier choice based on the same revision until a phone choice intervenes. This allows rapid offline selections to converge. A fresh explicit phone selection advances the cue revision even when its value is unchanged.
 
-## Publisher revisions and retries
+The phone journals the in-flight operation before writing and requests the updated Supabase row. The receipt follows confirmed persistence. If a response is lost during a process restart, the phone checks the profile value against its journal. A duplicate, retired generation or stale base produces the current authoritative snapshot. Account changes rotate the generation even when both profiles look identical. All phone journal, sharing and publisher state is in the backup-excluded `watch_publisher` preferences.
 
-`companionRequest` compares active/status/name/token/public to saved fields in phone `watch_publisher` preferences. On changed content (or first publish) revision becomes `max(currentTimeMillis, previousRevision + 1)`; unchanged retries reuse the revision. A persistent random publisher UUID makes a reset/reinstall a new generation. All publisher preferences are excluded from cloud backup and device transfer so a cloned/restored publisher does not reuse the ordering identity.
+The activity retries every 30 seconds while its sync effect is active. A background Wear Data Layer delivery schedules a network-constrained Android job, which waits for Auth initialization, refreshes the signed-in profile and retries transient failures with backoff. Android can defer that job while the phone is asleep. The foreground and Sync now paths also read retained DataItems after a restart or disconnection. The watch can display a pending cue while disconnected and confirms it only on a matching receipt. A watch paired with an older phone retains its original local-only selection behavior.
 
-`WatchSync` is a composable effect keyed by context, snapshot, ownerId and manual retry counter. For non-null snapshots it submits immediately, checks connected nodes, then waits 30 seconds and repeats. It reports SYNCING, then CONNECTED if any node exists, otherwise DISCONNECTED. Failures report disconnected. Manual Sync now restarts the effect. Its lifetime is the root composition; this is not a guaranteed background worker or perpetual service. The platform can carry the last submitted DataItem after reconnection.
+## Installation and verification
 
-Unchanged retries and Sync now reuse revisions. Therefore they do not override an intentional local watch cue. A later **content-changing** phone snapshot overrides it. There is no “force resend as new revision” action in the UI.
+Both APKs must use the same installed application ID and signing certificate on their respective devices. Both debug variants use `com.example.unspokenqueues`. The default release application IDs differ. The companion supports a coordinated release build using its documented `companionApplicationId` Gradle property and the phone's signing certificate. Play listing and signing choices require release-owner coordination.
 
-## Receiver and ordering
-
-Watch `WatchSyncService` receives DATA_CHANGED through its manifest service. It handles changed DataEvents, not deletion events. `receiveDataItem` requires exact path, schema 1 and a valid active cue; inactive snapshots clear cue/profile. Public profiles with no valid token produce no shareable profile, while private profiles can retain a name without sharing.
-
-The activity also reads existing DataItems every 30 seconds while STARTED to recover data missed by the listener. It releases the returned DataItem buffer. Both paths feed `WatchStore.receive`.
-
-`SnapshotOrder.accepts` requires a nonblank publisher, positive revision and publisher not retired. For the current generation, only a strictly greater revision is accepted. A new unretired generation is accepted even if its revision is lower, and the previous publisher is retired. Retired publishers cannot later resurrect identity. This handles a single phone installation/reset; simultaneous multiple publishers have no explicit owner arbitration and should be tested before supporting that scenario.
-
-`WatchStore` synchronizes access through a shared monitor, persists snapshot fields together and records local receive time. Accepted data always locks the cue and closes obsolete QR/selection screens. `saveLocal` accepts a UI write only if its revision and publisher still match current persisted data, preventing an old UI callback from overwriting a newer phone snapshot. Duplicate phone snapshots are ignored, preserving local cue choices and their receive timestamp.
-
-## Watch UI and disconnected behavior
-
-The watch initially shows Waiting for phone. Options leads to Share, Cue guide or deliberate unlock/selection. A local cue selection is permitted only while unlocked, persists immediately and relocks; it does not update phone/server. Back/Cancel relocks. A profile QR works independently of cue lock and closes after 30 seconds, Close or Back. The app is a normal Wear OS activity; it does not replace a watch face or force always-on illumination.
-
-Disconnected, the watch displays the last accepted snapshot/local choice. A privacy change or sign-out can clear it only after a newer snapshot arrives. Known tokens remain usable by the swap RPC even for a private profile; clearing a watch cache is not server-side token revocation. See [privacy limits](known-issues.md).
-
-## Changing the contract
-
-Update phone snapshot construction, DataMap writer, watch parser/model/store and both apps' tests together. Treat field types, cue names, exact path, clear semantics and revision comparison as compatibility requirements. A schema bump currently makes old receivers silently ignore data; plan mixed-version behavior before deploying one. Test equal/old revisions, new/retired generations, reinstallation, sign-out, account switch, private/public state, malformed data, reconnection and local watch overrides.
+Run `bash gradlew assembleDebug testDebugUnitTest compileDebugAndroidTestKotlin lintDebug` in both repositories. Phone instrumentation class `com.example.unspokenqueues.data.PhoneCueSyncTest` exercises all cues, same-value Sync now, network loss/restart, duplicate and racing edits, changing accounts and privacy. The Wear counterpart is `com.unspokencues.wear.WatchCueSyncTest`. These tests inject the backend and Data Layer boundary. For end-to-end release verification, pair two Google Play services devices signed with the same certificate and repeat offline selection, same-value phone edits and account switching against an approved test profile.

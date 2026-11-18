@@ -5,7 +5,7 @@ Android control center for **Unspoken Cues**: status (Green/Yellow/Red/Purple), 
 Planned phone Play identity: `com.unspokencues.phone`. Current build application ID: `com.example.unspokenqueues`; coordinate the phone/watch release identity before publishing.
 
 ## Status
-The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, [host announcements](docs/features/event-announcements.md), mutual S.W.A.P. cards/binder, and initial phone-to-watch synchronization. Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
+The current code includes Supabase email/password authentication and recovery, profile onboarding/editing, four cues, event hosting/discovery/RSVPs, [host announcements](docs/features/event-announcements.md), mutual S.W.A.P. cards/binder, and [two-way global cue synchronization](docs/handoff/watch-sync.md). Release identity and several reliability/privacy decisions remain open; see the handoff's known issues.
 
 ## Docs
 - **Start here for engineering takeover:** [Engineering handoff](docs/handoff/README.md) — setup, architecture, feature flows, API calls, database/access rules, watch protocol, source map, testing, troubleshooting, and ownership transfer.
@@ -27,26 +27,11 @@ Full product handoff lives outside this repo. Key rules:
 - Phone is the source-of-truth control surface; must sync reliably with the Wear OS app.
 - Final Play identity is `com.unspokencues.phone` — do not reuse `com.unspokencues.mobile` or leave a `playtest` applicationId in a release build.
 
-## Initial Wear OS companion
+## Wear OS companion
 
-The companion project is in `../unspoken-cues-wearos`; its original implementation
-plan referred to `luana-wearos`, so check the actual branch in your checkout.
-The companion project is in `../unspoken-cues-wearos` on branch `luana-wearos`.
-This phone app publishes the signed-in user's cue and public sharing information
-to `/unspoken-cues/state` using the Wear OS Data Layer. Open the phone app, complete
-onboarding, and pair your Wear OS watch; Settings → **Sync now** retries immediately.
-Updates also retry every 30 seconds while this app's composition is alive.
+After pairing and onboarding, changing a cue on either device updates the signed-in phone profile. The watch can queue a cue offline and shows confirmation after the phone verifies it with Supabase. **Settings → Sync now** retries retained watch input and republishes the committed cue. Private profiles withhold their sharing token. Sign-out clears the watch after delivery.
 
-The initial integration is phone-to-watch. Color changes made on the watch are
-local, and a newer phone snapshot replaces them. The watch uses the same
-`unspokencues://card/<token>` QR payload as the phone. No backend credentials are
-sent to the watch. Private profiles withhold their sharing token; sign-out sends
-an empty snapshot, which clears cached identity after delivery.
-
-Development builds currently pair using `com.example.unspokenqueues` on both
-devices and the same debug signing certificate. The documented release IDs differ;
-production pairing requires a coordinated shared application ID/signing decision
-before publishing. See the companion README for installation and device checks.
+The companion repository is `../unspoken-cues-wearos`. Both debug APKs use `com.example.unspokenqueues` and must share a signing certificate. See the [sync contract and paired-device checks](docs/handoff/watch-sync.md) before configuring release builds.
 
 ## Email confirmation page
 

@@ -1392,6 +1392,7 @@ fun SettingsScreen(
     safety: SafetyRepository,
     account: AuthRepository,
     watch: WatchConnection,
+    syncFeedback: String = "",
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     onReconnect: () -> Unit,
@@ -1416,10 +1417,11 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Wear OS watch", style = MaterialTheme.typography.titleMedium)
-                    Text("Pair your watch to receive phone updates", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Changes on either device update your global cue.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 WatchPill(watch)
             }
+            if (syncFeedback.isNotBlank()) Text(syncFeedback, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onReconnect, Modifier.fillMaxWidth()) {
                 Text("Sync now")
             }

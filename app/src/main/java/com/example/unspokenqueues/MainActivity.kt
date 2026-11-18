@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -59,11 +60,11 @@ import com.example.unspokenqueues.data.isSignInLink
 import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventRepository
+import com.example.unspokenqueues.data.PhoneCueSync
 import com.example.unspokenqueues.data.ProfileRepository
 import com.example.unspokenqueues.data.SafetyRepository
 import com.example.unspokenqueues.data.SwapRepository
 import com.example.unspokenqueues.data.swapFailureMessage
-import com.example.unspokenqueues.data.toCueStatus
 import com.example.unspokenqueues.data.toProfile
 import com.example.unspokenqueues.model.AppPhase
 import com.example.unspokenqueues.model.CollectedCard
@@ -267,7 +268,10 @@ fun UnspokenCuesApp(
     // Bumped by "Try again" to read the profile once more.
     var profileLoadAttempt by remember { mutableIntStateOf(0) }
     var tab by rememberSaveable { mutableStateOf(Tab.CUE) }
-    var status by rememberSaveable { mutableStateOf(CueStatus.GREEN) }
+    val cueSync = remember(context) { PhoneCueSync.get(context) }
+    val committed by cueSync.state.collectAsState()
+    val syncFeedback by cueSync.feedback.collectAsState()
+    val status = committed.takeIf { sessionUserId != null && it.owner == sessionUserId }?.status ?: CueStatus.GREEN
     var watch by remember { mutableStateOf(WatchConnection.DISCONNECTED) }
     var watchRetry by remember { mutableIntStateOf(0) }
     var watchSessionKnown by remember { mutableStateOf(false) }
@@ -296,7 +300,6 @@ fun UnspokenCuesApp(
         profileSetupDone = false
         profileLoadFailed = false
         profile = BlankProfile
-        status = CueStatus.GREEN
         cardToken = null
         collection = emptyList()
         creatingEvent = false
@@ -308,9 +311,8 @@ fun UnspokenCuesApp(
     // Keep the signed-in flag in sync with the persisted Supabase session (auto-refresh, sign-out).
     LaunchedEffect(Unit) {
         authRepo.sessionStatus.collect { s ->
-            // Only a definite answer changes the flag. The status goes back to Initializing every
-            // time the app is backgrounded (e.g. while the camera is open); treating that as signed
-            // out would flash the sign-in screen and throw away whatever screen the user was on.
+            // Only a definite answer changes the flag. Treating SDK initialization as sign-out
+            // would clear a returning user's watch generation before their session is restored.
             when (s) {
                 is SessionStatus.Authenticated -> {
                     watchSessionKnown = true
@@ -326,6 +328,7 @@ fun UnspokenCuesApp(
                     userId = null
                     sessionUserId = null
                     forgetAccount()
+                    cueSync.signedOut()
                 }
                 else -> Unit
             }
@@ -340,10 +343,9 @@ fun UnspokenCuesApp(
         if (onboardedHere) onboardingComplete = true
         profileLoadFailed = false
         try {
-            val row = profileRepo.loadProfile(uid)
+            val row = cueSync.loadProfile(uid)
             if (row != null) {
                 profile = row.toProfile()
-                status = row.toCueStatus()
             } else {
                 // No row yet (e.g. older account): start blank and let the profile wizard create it.
                 profile = BlankProfile
@@ -399,7 +401,7 @@ fun UnspokenCuesApp(
             com.example.unspokenqueues.model.watchSnapshotWhileLoading(sessionUserId, watchPublishedUserId)
         else -> com.example.unspokenqueues.model.watchSnapshot(true, status, profile.displayName, cardToken, profile.isPublic && !profile.privateMode)
     }
-    com.example.unspokenqueues.data.WatchSync(companionSnapshot, sessionUserId, watchRetry,
+    com.example.unspokenqueues.data.WatchSync(cueSync, companionSnapshot, sessionUserId, watchRetry,
         onConnection = { watch = it },
         onPublished = { owner ->
             if (watchPublishedUserId != owner) {
@@ -583,6 +585,7 @@ fun UnspokenCuesApp(
                         // Saved before moving on; if this throws the wizard reports it and stays.
                         val uid = authRepo.currentUserId() ?: error("Not signed in")
                         profileRepo.upsertProfile(uid, updated, status)
+                        cueSync.loadProfile(uid)
                         profile = updated
                         profileSetupDone = true
                     },
@@ -669,7 +672,8 @@ fun UnspokenCuesApp(
                         onSave = { updated ->
                             // Saved before closing; if this throws the screen reports it and stays open.
                             val id = authRepo.currentUserId() ?: error("Not signed in")
-                            profileRepo.upsertProfile(id, updated, status)
+                            val canShare = profileRepo.updateProfile(id, updated)
+                            cueSync.updateSharingPermission(id, canShare)
                             // Its own call: the card image has its own column.
                             if (updated.cardImageUrl != profile.cardImageUrl) profileRepo.updateCardImage(id, updated.cardImageUrl)
                             profile = updated
@@ -686,9 +690,11 @@ fun UnspokenCuesApp(
                         safety = safetyRepo,
                         account = authRepo,
                         watch = watch,
+                        syncFeedback = syncFeedback,
                         themeMode = themeMode,
                         onThemeModeChange = onThemeModeChange,
                         onReconnect = {
+                            if (!profileLoaded) profileLoadAttempt++
                             watchRetry++
                         },
                         onSignOut = ::signOut,
@@ -744,12 +750,17 @@ fun UnspokenCuesApp(
             ) { shownTab ->
                 when (shownTab) {
                     Tab.CUE -> CueScreen(status, watch, profile.privateMode) { newStatus ->
-                        val before = status
-                        status = newStatus
-                        saveOrRevert(
-                            "Couldn't update your cue. Check your connection.",
-                            revert = { if (status == newStatus) status = before },
-                        ) { id -> profileRepo.updateStatus(id, newStatus) }
+                        val id = sessionUserId
+                        if (id != null) scope.launch {
+                            try {
+                                cueSync.phoneChoice(id, newStatus)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Couldn't confirm your cue. Check your connection.",
+                                    Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                     Tab.EVENTS -> if (uid != null) {
                         EventsScreen(
@@ -817,14 +828,20 @@ fun UnspokenCuesApp(
                                 saveOrRevert(
                                     "Couldn't update your profile visibility. Check your connection.",
                                     revert = { if (profile.isPublic == isPublic) profile = profile.copy(isPublic = !isPublic) },
-                                ) { id -> profileRepo.updateVisibility(id, isPublic) }
+                                ) { id ->
+                                    val canShare = profileRepo.updateVisibility(id, isPublic)
+                                    cueSync.updateSharingPermission(id, canShare)
+                                }
                             },
                             onPrivateModeChange = { on ->
                                 profile = profile.copy(privateMode = on)
                                 saveOrRevert(
                                     "Couldn't update Private Mode. Check your connection.",
                                     revert = { if (profile.privateMode == on) profile = profile.copy(privateMode = !on) },
-                                ) { id -> profileRepo.updatePrivateMode(id, on) }
+                                ) { id ->
+                                    val canShare = profileRepo.updatePrivateMode(id, on)
+                                    cueSync.updateSharingPermission(id, canShare)
+                                }
                             },
                             onPrivacyChange = { privacy ->
                                 val before = profile.privacy

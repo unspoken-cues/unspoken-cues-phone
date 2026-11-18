@@ -31,11 +31,29 @@ class ProfileRepository(
         table().upsert(profile.toUpsert(userId, status))
     }
 
-    /** Updates only the status column for the user. */
-    suspend fun updateStatus(userId: String, status: CueStatus) {
-        table().update(mapOf("status" to status.name)) {
+    /** Editing the card must never resubmit a cue captured before a watch update. */
+    suspend fun updateProfile(userId: String, profile: Profile): Boolean {
+        val row = table().update({
+            set("display_name", profile.displayName)
+            set("bio", profile.bio)
+            set("preferences", profile.preferences)
+            set("boundaries", profile.boundaries)
+            set("is_public", profile.isPublic)
+            set("avatar_url", profile.avatarUrl)
+        }) {
             filter { eq("id", userId) }
-        }
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
+    }
+
+    /** Request the updated row so a missing or inaccessible profile cannot produce a receipt. */
+    suspend fun updateStatus(userId: String, status: CueStatus) {
+        val row = table().update(mapOf("status" to status.name)) {
+            filter { eq("id", userId) }
+            select(Columns.list("id", "status"))
+        }.decodeSingle<ProfileRow>()
+        check(row.id == userId && row.status == status.name)
     }
 
     /**
@@ -50,10 +68,12 @@ class ProfileRepository(
     }
 
     /** Updates only the public-visibility flag. */
-    suspend fun updateVisibility(userId: String, isPublic: Boolean) {
-        table().update(mapOf("is_public" to isPublic)) {
+    suspend fun updateVisibility(userId: String, isPublic: Boolean): Boolean {
+        val row = table().update(mapOf("is_public" to isPublic)) {
             filter { eq("id", userId) }
-        }
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
     }
 
     /** Updates only which fields people the user hasn't swapped with may see. */
@@ -72,10 +92,12 @@ class ProfileRepository(
     }
 
     /** Turns Private Mode on or off: hides the profile from everyone and pauses swaps while on. */
-    suspend fun updatePrivateMode(userId: String, on: Boolean) {
-        table().update(mapOf("private_mode" to on)) {
+    suspend fun updatePrivateMode(userId: String, on: Boolean): Boolean {
+        val row = table().update(mapOf("private_mode" to on)) {
             filter { eq("id", userId) }
-        }
+            select(SHARING_COLUMNS)
+        }.decodeSingle<ProfileRow>()
+        return row.allowsWatchSharing(userId)
     }
 
     /** Records that the user has finished onboarding, so they aren't taken through it again. */
@@ -85,7 +107,13 @@ class ProfileRepository(
         }
     }
 
+    private fun ProfileRow.allowsWatchSharing(userId: String): Boolean {
+        check(id == userId)
+        return isPublic && !privateMode
+    }
+
     private companion object {
+        val SHARING_COLUMNS = Columns.list("id", "is_public", "private_mode")
         const val TABLE = "profiles"
     }
 }

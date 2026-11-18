@@ -31,9 +31,7 @@ The five-tab tutorial follows profile setup. Both Skip and Done complete onboard
 
 ## Cue and watch connection
 
-Exactly one of GREEN/YELLOW/RED/PURPLE is active. The phone immediately changes local cue state and asynchronously updates `profiles.status`. A failed database update is hidden and not queued. Invalid stored cue strings map to GREEN on the phone; the watch rejects invalid active snapshot statuses instead.
-
-The same local state drives watch snapshots once session/profile/onboarding gates are satisfied. The connection pill reflects publishing progress and connected Data Layer nodes. It does not confirm that the companion installed, accepted, displayed or persisted a snapshot. Settings → Sync now restarts the publisher effect.
+The signed-in phone confirms the global cue with Supabase. The cue screen observes the confirmed value. A watch selection queues durably and updates the same global profile field. Settings → Sync now retries the pending operation and republishes the authoritative cue. The connection pill reports the Data Layer connection independently of the profile write. See the [sync contract](watch-sync.md).
 
 ## Profile, photos and visibility
 
