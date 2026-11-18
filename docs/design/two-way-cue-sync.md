@@ -23,6 +23,6 @@ Install the phone APK on the phone and the Wear APK on the watch. Both debug var
 
 ## Verification on November 18, 2026
 
-The phone and Wear OS projects both passed `bash gradlew assembleDebug testDebugUnitTest compileDebugAndroidTestKotlin lintDebug --max-workers=2` with the Android Studio JDK and Android SDK 37. The JVM suites contain 168 phone tests and 16 watch tests. Lint reported zero errors in both projects. The Wear OS emulator passed seven connected tests across `WatchCueSyncTest` and `WatchAppTest`.
+The phone and Wear OS projects both passed `bash gradlew assembleDebug testDebugUnitTest compileDebugAndroidTestKotlin lintDebug --max-workers=2` with the Android Studio JDK and Android SDK 37. The JVM suites contain 168 phone tests and 16 watch tests. Lint reported zero errors in both projects. The API 37 phone emulator passed all seven cases in `PhoneCueSyncTest`, including a delayed server write arriving after a process restart and a same-value phone choice. The API 37 Wear OS emulator passed seven connected tests across `WatchCueSyncTest` and `WatchAppTest`.
 
 The [phone and Wear sync contract](../handoff/watch-sync.md) records the protocol, process restart and offline behavior, paired-device verification steps, package identities and signing requirements. A live Supabase account and two physically paired devices still require a separate release check.

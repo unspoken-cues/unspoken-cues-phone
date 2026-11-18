@@ -26,7 +26,7 @@ Request metadata contains no profile identifier, credentials or sharing capabili
 
 ## Conflicts and recovery
 
-The phone serializes cue writes and authoritative reads. The watch generation must match the signed-in account and the base revision must still be current. The same watch can replace an earlier choice based on the same revision until a phone choice intervenes. This allows rapid offline selections to converge. A fresh explicit phone selection advances the cue revision even when its value is unchanged.
+The phone serializes cue writes and authoritative reads. Each Supabase PATCH also filters on the row’s observed `updated_at` timestamp. The existing database trigger changes that timestamp on every successful write, including a same-value selection. A late request therefore cannot undo a newer committed cue after an HTTP timeout or process death. The watch generation must match the signed-in account and the base revision must still be current. The same watch can replace an earlier choice based on the same revision until a phone choice intervenes. This allows rapid offline selections to converge. A fresh explicit phone selection advances the cue revision even when its value is unchanged.
 
 The phone journals the in-flight operation before writing and requests the updated Supabase row. The receipt follows confirmed persistence. If a response is lost during a process restart, the phone checks the profile value against its journal. A duplicate, retired generation or stale base produces the current authoritative snapshot. Account changes rotate the generation even when both profiles look identical. All phone journal, sharing and publisher state is in the backup-excluded `watch_publisher` preferences.
 

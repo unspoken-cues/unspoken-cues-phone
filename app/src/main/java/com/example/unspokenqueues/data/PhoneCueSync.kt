@@ -9,6 +9,8 @@ import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +18,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.IOException
 import java.util.UUID
 
 @Serializable
@@ -60,7 +63,7 @@ internal data class PhoneCueState(
 internal interface CueBackend {
     fun userId(): String?
     suspend fun profile(id: String): ProfileRow?
-    suspend fun write(id: String, cue: CueStatus)
+    suspend fun write(id: String, cue: CueStatus, expectedUpdatedAt: String): ProfileRow?
 }
 
 internal interface CueTransport {
@@ -144,6 +147,28 @@ internal class PhoneCueSync(
         refresh(id)
     }
 
+    // Once dispatched, the write and local receipt finish together even if Compose or JobScheduler
+    // cancels its caller. The DB version predicate also fences a PATCH that outlives an HTTP timeout.
+    private suspend fun commitIfCurrent(id: String, cue: CueStatus, base: ProfileRow,
+                                        request: WatchCueRequest? = null): ProfileRow? = withContext(NonCancellable) {
+        requireOwner(id)
+        check(base.id == id && base.updatedAt.isNotBlank())
+        try {
+            withTimeout(20_000) {
+                val updated = backend.write(id, cue, base.updatedAt) ?: return@withTimeout null
+                requireOwner(id)
+                check(updated.id == id && updated.status == cue.name && updated.updatedAt.isNotBlank())
+                val confirmed = if (request == null) current.value.copy(status = cue)
+                    else current.value.confirm(cue, request)
+                save(confirmed.copy(serverAllowsSharing = updated.isPublic && !updated.privateMode,
+                    needsProfileCheck = false))
+                updated
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw IOException("Timed out confirming the profile cue", e)
+        }
+    }
+
     suspend fun phoneChoice(id: String, cue: CueStatus) = mutex.withLock {
         alignAccount()
         requireOwner(id)
@@ -151,10 +176,14 @@ internal class PhoneCueSync(
         // Even reselecting today's cue invalidates edits based on the previous revision.
         save(state.copy(revision = state.revision + 1, receipt = null, inFlight = null, needsProfileCheck = true))
         try {
-            backend.write(id, cue)
-            requireOwner(id)
-            save(current.value.copy(status = cue, needsProfileCheck = false))
-            message.value = "Phone cue saved."
+            repeat(3) {
+                val row = checkNotNull(backend.profile(id))
+                if (commitIfCurrent(id, cue, row) != null) {
+                    message.value = "Phone cue saved."
+                    return@withLock
+                }
+            }
+            error("Profile changed while saving the cue")
         } finally {
             localEdits.value++
         }
@@ -177,16 +206,22 @@ internal class PhoneCueSync(
                 val needsRefresh = force || verifyProfile || current.value.needsProfileCheck ||
                     current.value.inFlight != null || requests.any(current.value::accepts)
                 if (needsRefresh) {
-                    checkNotNull(refresh(id))
+                    var row = checkNotNull(refresh(id))
                     for (request in requests) {
                         val state = current.value
                         if (!state.accepts(request)) continue
                         requireOwner(id)
                         save(state.copy(inFlight = request))
-                        backend.write(id, request.status)
-                        requireOwner(id)
-                        save(current.value.confirm(request.status, request))
-                        message.value = "Watch cue saved to your profile."
+                        val updated = commitIfCurrent(id, request.status, row, request)
+                        if (updated != null) {
+                            row = updated
+                            message.value = "Watch cue saved to your profile."
+                        } else {
+                            row = checkNotNull(refresh(id))
+                            // A concurrent profile edit may only have changed the bio or visibility.
+                            // Retry later if this choice is still eligible against the refreshed cue.
+                            check(!current.value.accepts(request))
+                        }
                     }
                     if (force && current.value.inFlight == null) message.value = "Profile cue confirmed."
                 }
@@ -231,7 +266,8 @@ internal class PhoneCueSync(
                         }
                     }
                     override suspend fun profile(id: String) = profiles.loadProfile(id)
-                    override suspend fun write(id: String, cue: CueStatus) = profiles.updateStatus(id, cue)
+                    override suspend fun write(id: String, cue: CueStatus, expectedUpdatedAt: String) =
+                        profiles.updateStatus(id, cue, expectedUpdatedAt)
                 }
                 PhoneCueSync(prefs, backend, WearCueTransport(app, prefs)).also { instance = it }
             }

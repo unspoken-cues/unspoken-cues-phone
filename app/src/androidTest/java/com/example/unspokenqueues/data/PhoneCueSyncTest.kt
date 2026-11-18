@@ -27,18 +27,32 @@ class PhoneCueSyncTest {
     private val writer = UUID.randomUUID().toString()
     private val owner = "account-a"
     private var signedIn: String? = owner
-    private var row = ProfileRow(owner, status = "GREEN")
+    private var row = ProfileRow(owner, status = "GREEN", updatedAt = "0")
+    private var version = 0L
+    private var delayNextPatch = false
+    private var delayedPatch: (() -> ProfileRow?)? = null
     private val writes = mutableListOf<CueStatus>()
     private var offline = false
     private var beforeWrite: suspend () -> Unit = {}
     private val backend = object : CueBackend {
         override fun userId() = signedIn
         override suspend fun profile(id: String): ProfileRow = row.also { check(it.id == id) }
-        override suspend fun write(id: String, cue: CueStatus) {
+        override suspend fun write(id: String, cue: CueStatus, expectedUpdatedAt: String): ProfileRow? {
             beforeWrite()
             check(!offline && id == signedIn && id == row.id)
-            writes += cue
-            row = row.copy(status = cue.name)
+            val patch = {
+                if (row.updatedAt != expectedUpdatedAt) null else {
+                    writes += cue
+                    row = row.copy(status = cue.name, updatedAt = (++version).toString())
+                    row
+                }
+            }
+            if (delayNextPatch) {
+                delayNextPatch = false
+                delayedPatch = patch
+                throw java.io.IOException("Response lost before the server completed the request")
+            }
+            return patch()
         }
     }
     private var pending: List<WatchCueRequest> = emptyList()
@@ -138,6 +152,20 @@ class PhoneCueSyncTest {
         assertEquals("PURPLE", row.status)
     }
 
+    @Test fun delayedServerPatchCannotUndoANewerSameValuePhoneChoiceAfterRestart() = runBlocking {
+        start()
+        pending = listOf(request(CueStatus.RED, 1))
+        delayNextPatch = true
+        assertTrue(runCatching { sync.reconcile() }.isFailure)
+        sync = restart()
+        sync.phoneChoice(owner, CueStatus.GREEN)
+        assertNull(checkNotNull(delayedPatch).invoke())
+        sync.reconcile(true)
+        assertEquals(listOf(CueStatus.GREEN), writes)
+        assertEquals("GREEN", published.getString("status"))
+        assertEquals("", published.getString("receipt"))
+    }
+
     @Test fun accountReplacementAndPrivateServerProfileCannotReuseTheOldTokenOrReceipt() = runBlocking {
         start()
         val oldGeneration = published.getString("generation")
@@ -148,7 +176,7 @@ class PhoneCueSyncTest {
         assertFalse(published.getBoolean("public"))
         sync.phoneChoice(owner, CueStatus.GREEN)
         signedIn = "account-b"
-        row = ProfileRow("account-b", status = "GREEN")
+        row = ProfileRow("account-b", status = "GREEN", updatedAt = "0")
         sync.loadProfile("account-b")
         sync.sharing("account-b", shared)
         sync.reconcile()

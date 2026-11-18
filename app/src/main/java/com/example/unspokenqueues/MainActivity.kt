@@ -584,7 +584,7 @@ fun UnspokenCuesApp(
                     onFinish = { updated ->
                         // Saved before moving on; if this throws the wizard reports it and stays.
                         val uid = authRepo.currentUserId() ?: error("Not signed in")
-                        profileRepo.upsertProfile(uid, updated, status)
+                        profileRepo.upsertProfile(uid, updated)
                         cueSync.loadProfile(uid)
                         profile = updated
                         profileSetupDone = true
@@ -672,7 +672,7 @@ fun UnspokenCuesApp(
                         onSave = { updated ->
                             // Saved before closing; if this throws the screen reports it and stays open.
                             val id = authRepo.currentUserId() ?: error("Not signed in")
-                            val canShare = profileRepo.updateProfile(id, updated)
+                            val canShare = profileRepo.upsertProfile(id, updated)
                             cueSync.updateSharingPermission(id, canShare)
                             // Its own call: the card image has its own column.
                             if (updated.cardImageUrl != profile.cardImageUrl) profileRepo.updateCardImage(id, updated.cardImageUrl)

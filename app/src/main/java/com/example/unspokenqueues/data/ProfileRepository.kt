@@ -26,34 +26,24 @@ class ProfileRepository(
             limit(1)
         }.decodeSingleOrNull()
 
-    /** Creates or replaces the user's full profile row (including status). */
-    suspend fun upsertProfile(userId: String, profile: Profile, status: CueStatus) {
-        table().upsert(profile.toUpsert(userId, status))
-    }
-
-    /** Editing the card must never resubmit a cue captured before a watch update. */
-    suspend fun updateProfile(userId: String, profile: Profile): Boolean {
-        val row = table().update({
-            set("display_name", profile.displayName)
-            set("bio", profile.bio)
-            set("preferences", profile.preferences)
-            set("boundaries", profile.boundaries)
-            set("is_public", profile.isPublic)
-            set("avatar_url", profile.avatarUrl)
-        }) {
-            filter { eq("id", userId) }
+    /** Onboarding and card edits preserve the cue, including when the row already exists. */
+    suspend fun upsertProfile(userId: String, profile: Profile): Boolean {
+        val row = table().upsert(profile.toUpsert(userId)) {
             select(SHARING_COLUMNS)
         }.decodeSingle<ProfileRow>()
         return row.allowsWatchSharing(userId)
     }
 
-    /** Request the updated row so a missing or inaccessible profile cannot produce a receipt. */
-    suspend fun updateStatus(userId: String, status: CueStatus) {
-        val row = table().update(mapOf("status" to status.name)) {
-            filter { eq("id", userId) }
-            select(Columns.list("id", "status"))
-        }.decodeSingle<ProfileRow>()
-        check(row.id == userId && row.status == status.name)
+    /** A delayed PATCH can only modify the exact profile version that authorized it. */
+    suspend fun updateStatus(userId: String, status: CueStatus, expectedUpdatedAt: String): ProfileRow? {
+        require(expectedUpdatedAt.isNotBlank())
+        return table().update(mapOf("status" to status.name)) {
+            filter {
+                eq("id", userId)
+                eq("updated_at", expectedUpdatedAt)
+            }
+            select(Columns.list("id", "status", "updated_at", "is_public", "private_mode"))
+        }.decodeSingleOrNull()
     }
 
     /**
