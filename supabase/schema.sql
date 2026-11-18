@@ -235,6 +235,7 @@ create policy "Users can join as themselves"
   to authenticated
   with check (auth.uid() = user_id);
 
+-- Section 21 drops both read policies below: everyone reads only their own rows.
 create policy "Members can read co-members"
   on public.event_members for select
   using (public.is_event_member(event_id));
@@ -298,9 +299,11 @@ grant  execute on function public.join_event_by_code(text) to authenticated;
 --     write inside the folder named after their own user id, e.g.
 --     avatars/<auth.uid()>/photo.jpg
 -- ---------------------------------------------------------------------------
-insert into storage.buckets (id, name, public)
-values ('avatars', 'avatars', true)
-on conflict (id) do update set public = true;
+-- The app uploads only JPEGs it has shrunk on the device, well under 5 MB.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Avatars are publicly readable"   on storage.objects;
 drop policy if exists "Users can upload own avatar"     on storage.objects;
@@ -522,9 +525,10 @@ create policy "Members can update own rsvp"
 
 -- event-covers Storage bucket: anyone can view; a signed-in user writes only inside the
 -- folder named after their own user id, e.g. event-covers/<auth.uid()>/<file>.jpg
-insert into storage.buckets (id, name, public)
-values ('event-covers', 'event-covers', true)
-on conflict (id) do update set public = true;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('event-covers', 'event-covers', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Event covers are publicly readable"   on storage.objects;
 drop policy if exists "Users can upload own event covers"    on storage.objects;
@@ -778,8 +782,8 @@ grant  execute on function public.event_attendees(uuid) to authenticated;
 
 -- Makes the caller's swap with other_id temporary and returns when it ends: the
 -- soonest end still ahead of an active event they are both in (as members, or one
--- hosts and the other joined), else 24 hours from now. An event with no end time
--- ends 3 hours after it starts, as the app assumes. If the swap already ends sooner
+-- hosts and the other joined), else 24 hours from now. An event's end is
+-- public.event_end() (section 21), as the app assumes. If the swap already ends sooner
 -- it keeps that time, so either person choosing temporary wins.
 create or replace function public.make_swap_temporary(other_id uuid)
 returns timestamptz
@@ -799,10 +803,10 @@ begin
     raise exception 'No swap with that person' using errcode = 'P0002';
   end if;
 
-  select min(coalesce(e.ends_at, e.starts_at + interval '3 hours')) into ends
+  select min(public.event_end(e)) into ends
   from public.events e
   where e.active
-    and coalesce(e.ends_at, e.starts_at + interval '3 hours') > now()
+    and public.event_end(e) > now()
     and (e.host_id = me or exists (
           select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))
     and (e.host_id = other_id or exists (
@@ -970,7 +974,7 @@ begin
     end if;
     return saved; -- A lost response can be retried even after the event ends; no new write.
   end if;
-  if not ev.active or coalesce(ev.ends_at, ev.starts_at + interval '3 hours') <= clock_timestamp() then
+  if not ev.active or public.event_end(ev) <= clock_timestamp() then
     raise exception 'Event has ended' using errcode = '42501';
   end if;
   insert into public.event_announcements (event_id, body, request_id)
@@ -1051,8 +1055,8 @@ begin
   -- event profile: eligibility uses the caller's cue for this event.
   select opted and exists (select 1 from public.events e join public.event_effective_profiles(p_event_id) p on p.id = me
     where e.id = p_event_id and e.active
-      and (coalesce(e.ends_at, e.starts_at + interval '3 hours') is null
-        or coalesce(e.ends_at, e.starts_at + interval '3 hours') > clock_timestamp())
+      and (public.event_end(e) is null
+        or public.event_end(e) > clock_timestamp())
       and public.event_wave_visible(p, me)) into eligible;
   if eligible then
     select coalesce(jsonb_agg(jsonb_build_object(
@@ -1115,7 +1119,7 @@ begin
     and m.user_id in (me, p_recipient_id) order by m.user_id for key share;
   -- Lock profiles in a consistent order: visibility/cue updates cannot race this check.
   perform 1 from public.profiles p where p.id in (me, p_recipient_id) order by p.id for update;
-  if not ev.active or coalesce(ev.ends_at, ev.starts_at + interval '3 hours') <= clock_timestamp()
+  if not ev.active or public.event_end(ev) <= clock_timestamp()
     or not public.event_wave_participant(p_event_id, me)
     or not public.event_wave_participant(p_event_id, p_recipient_id)
     -- event profile: both cues are checked as set for this event.
@@ -1160,6 +1164,7 @@ begin;
 alter table public.event_members add column if not exists cued_in boolean not null default true;
 
 -- directory: a co-member reading the table directly must not find a cued-out member either.
+-- (Section 21 drops this policy again: members now read only their own rows.)
 drop policy if exists "Members can read co-members" on public.event_members;
 create policy "Members can read co-members"
   on public.event_members for select
@@ -1373,6 +1378,80 @@ revoke all on function public.my_event_profile(uuid),
   public.set_event_profile(uuid, text, text, public.cue_status) from public, anon;
 grant execute on function public.my_event_profile(uuid),
   public.set_event_profile(uuid, text, text, public.cue_status) to authenticated;
+
+commit;
+
+-- 21. Hardening (same definitions as 202611170005_hardening.sql). The migration also redefines
+--     make_swap_temporary (section 16), post_event_announcement (section 17), event_wave_state and
+--     send_event_wave (section 18) to call public.event_end(); those are changed in place above.
+begin;
+
+-- Members read only their own membership rows. Everyone else's go through event_attendees(),
+-- which applies blocks, Private Mode, visibility, the cue rule and Cue Out; a direct read skipped
+-- all of those.
+drop policy if exists "Members can read co-members"    on public.event_members;
+drop policy if exists "Host can read event members"    on public.event_members;
+drop policy if exists "Users can read own memberships" on public.event_members;
+create policy "Users can read own memberships"
+  on public.event_members for select
+  using (user_id = auth.uid());
+
+-- Profile size limits. Check constraints cannot hold a subquery, hence the helper. Executable by
+-- every role on purpose: a check constraint runs it as whoever writes the row.
+create or replace function public.text_items_fit(items text[], max_items integer, max_chars integer)
+returns boolean language sql immutable set search_path = '' as $$
+  select cardinality(items) <= max_items
+    and not exists (select 1 from unnest(items) i where char_length(i) > max_chars);
+$$;
+
+-- not valid: rows already over a limit stay, but every new write is checked.
+alter table public.profiles drop constraint if exists profiles_display_name_length;
+alter table public.profiles drop constraint if exists profiles_bio_length;
+alter table public.profiles drop constraint if exists profiles_preferences_size;
+alter table public.profiles drop constraint if exists profiles_boundaries_size;
+-- 80: the watch shows at most 80 characters of a name. 120: the app's BIO_MAX_LENGTH.
+alter table public.profiles add constraint profiles_display_name_length
+  check (char_length(display_name) <= 80) not valid;
+alter table public.profiles add constraint profiles_bio_length
+  check (char_length(bio) <= 120) not valid;
+alter table public.profiles add constraint profiles_preferences_size
+  check (public.text_items_fit(preferences, 20, 60)) not valid;
+alter table public.profiles add constraint profiles_boundaries_size
+  check (public.text_items_fit(boundaries, 20, 60)) not valid;
+alter table public.event_profiles drop constraint if exists event_profiles_display_name_length;
+alter table public.event_profiles add constraint event_profiles_display_name_length
+  check (char_length(display_name) <= 80) not valid;
+
+-- The app uploads only JPEGs it has shrunk on the device, well under 5 MB.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, '{image/jpeg}'),
+       ('event-covers', 'event-covers', true, 5242880, '{image/jpeg}')
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+-- Deletes the caller's account. Every app table cascades from auth.users, except that reports
+-- the caller filed keep their row with a null reporter. The app deletes the caller's Storage
+-- files first: Storage objects are not covered by these cascades.
+create or replace function public.delete_my_account()
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in' using errcode = '28000';
+  end if;
+  delete from auth.users where id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;
+
+-- When an event ends. One with no end time runs 3 hours, like DEFAULT_EVENT_LENGTH in the app;
+-- one with no start either has no end. make_swap_temporary, post_event_announcement,
+-- event_wave_state and send_event_wave use it; each is otherwise unchanged.
+create or replace function public.event_end(e public.events)
+returns timestamptz language sql stable set search_path = '' as $$
+  select coalesce(e.ends_at, e.starts_at + interval '3 hours');
+$$;
+revoke all on function public.event_end(public.events) from public, anon, authenticated;
 
 commit;
 

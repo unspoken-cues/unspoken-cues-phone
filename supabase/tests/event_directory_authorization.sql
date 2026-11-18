@@ -93,8 +93,9 @@ select pg_temp.assert_denied($q$select public.send_event_wave('10000000-0000-000
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-000000000001"}';
 select pg_temp.assert_true((select not a.cued_in from public.event_attendees('10000000-0000-0000-0000-000000000001') a
   where a.user_id = '00000000-0000-0000-0000-000000000002'), 'host sees cued-out member, marked');
-select pg_temp.assert_true(exists (select 1 from public.event_members m
-  where m.user_id = '00000000-0000-0000-0000-000000000002'), 'host reads the membership row');
+-- hardening: the host reads members only through event_attendees(), never the table.
+select pg_temp.assert_true(not exists (select 1 from public.event_members m
+  where m.user_id = '00000000-0000-0000-0000-000000000002'), 'host cannot read the membership row directly');
 select pg_temp.assert_denied($q$select public.send_event_wave('10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000002')$q$);
 
 -- RSVP and rejoin keep the choice / start fresh.

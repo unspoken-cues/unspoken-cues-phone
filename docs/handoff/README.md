@@ -37,3 +37,5 @@ See [event waves](quick-reactions.md) for quick-reaction setup, authorization, v
 See [event directory](event-directory.md) for Cue In / Cue Out setup, authorization, verification and rollback.
 
 See [event profiles](event-profiles.md) for per-event name, bio and cue overrides: setup, authorization, verification and rollback.
+
+See [hardening](hardening.md) for the 2026-11-17 audit fixes: own-row membership reads, profile size limits, JPEG-only buckets, account deletion and the shared event end rule.

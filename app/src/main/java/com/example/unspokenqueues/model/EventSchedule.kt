@@ -14,7 +14,7 @@ import java.util.Locale
 enum class EventPhase { UPCOMING, LIVE, PAST }
 
 /** An event with no end time is treated as running this long after it starts. */
-val DEFAULT_EVENT_LENGTH: Duration = Duration.ofHours(3)
+val DEFAULT_EVENT_LENGTH: Duration = Duration.ofHours(3) // Same rule as public.event_end() in the schema; change both.
 
 /**
  * The end of the event. An event with a start but no end runs for [DEFAULT_EVENT_LENGTH]; one
