@@ -8,6 +8,18 @@ import kotlin.random.Random
 
 class EventRulesTest {
 
+    // ---------- blockedAttendeeWarning ----------
+
+    @Test
+    fun blockedWarning_namesEveryone() {
+        assertEquals("Jordan, who you blocked, is going to this event.", blockedAttendeeWarning(listOf("Jordan")))
+        assertEquals("Jordan and Sam, who you blocked, are going to this event.", blockedAttendeeWarning(listOf("Jordan", "Sam")))
+        assertEquals(
+            "Alex, Jordan and Someone, who you blocked, are going to this event.",
+            blockedAttendeeWarning(listOf("Alex", "Jordan", " ")),
+        )
+    }
+
     // ---------- isValidJoinCode ----------
 
     @Test

@@ -44,6 +44,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.example.unspokenqueues.data.safeImage
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.WatchConnection
 import com.example.unspokenqueues.ui.theme.CueGreen
@@ -154,9 +155,10 @@ fun Avatar(name: String, size: Int, image: Any? = null) {
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
-        if (image != null && image != "") {
+        val safe = safeImage(image)
+        if (safe != null) {
             AsyncImage(
-                model = image,
+                model = safe,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().clip(CircleShape),

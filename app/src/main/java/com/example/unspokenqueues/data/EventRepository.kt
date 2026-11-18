@@ -1,6 +1,7 @@
 package com.example.unspokenqueues.data
 
 import com.example.unspokenqueues.model.Attendee
+import com.example.unspokenqueues.model.DEFAULT_EVENT_LENGTH
 import com.example.unspokenqueues.model.Event
 import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Rsvp
@@ -9,11 +10,13 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
+import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /** Payload for creating an event. The id, active flag and timestamps are set by the server. */
 @Serializable
@@ -51,6 +54,19 @@ data class EventDraft(
     val isPublic: Boolean = false,
     val hostName: String = "",
 )
+
+/**
+ * Keeps events not yet over at [now], the server-side twin of `Event.effectiveEnd`: the end is still
+ * ahead, or there is no end and the start was under [DEFAULT_EVENT_LENGTH] ago, or there is no time.
+ */
+fun PostgrestFilterBuilder.notOverAt(now: Instant) = or {
+    gt("ends_at", now.toString())
+    and {
+        exact("ends_at", null)
+        gt("starts_at", now.minus(DEFAULT_EVENT_LENGTH).toString())
+    }
+    exact("starts_at", null)
+}
 
 /**
  * What to tell the user when joining an event failed. [sqlState] is the Postgres error code the
@@ -194,6 +210,22 @@ open class EventRepository(
             .decodeAs<EventRow>()
             .toEvent()
 
+    /**
+     * Names of people the signed-in user blocked who are going to this event, to warn them before
+     * they join. The server lists only the host and members any attendee could see anyway, and
+     * answers nothing for an event the user can't read.
+     */
+    open suspend fun blockedAttendees(eventId: String): List<String> =
+        postgrest.rpc(BLOCKED_ATTENDEES_RPC, buildJsonObject { put("p_event_id", eventId) })
+            .decodeList<BlockedUserRow>()
+            .map { it.displayName }
+
+    /** Like [blockedAttendees], for the active event with this join code; empty if there is none. */
+    open suspend fun blockedAttendeesByCode(code: String): List<String> =
+        postgrest.rpc(BLOCKED_ATTENDEES_BY_CODE_RPC, buildJsonObject { put("code", code.trim()) })
+            .decodeList<BlockedUserRow>()
+            .map { it.displayName }
+
     /** Ends an event so nobody else can join it. Only has an effect for the host. */
     open suspend fun endEvent(eventId: String) {
         postgrest.from(EVENTS).update(mapOf("active" to false)) {
@@ -242,8 +274,9 @@ open class EventRepository(
             .toRsvps()
 
     /**
-     * Public events that haven't been ended, soonest first. Row Level Security lets every
-     * signed-in user read them; the caller drops ones that are already over.
+     * Public events that haven't been ended or run out, soonest first. Row Level Security lets
+     * every signed-in user read them. Past ones are dropped here, before the limit, because hosts
+     * rarely end events and enough stale ones would fill the whole page.
      */
     open suspend fun discoverEvents(): List<Event> =
         postgrest.from(EVENTS)
@@ -251,6 +284,7 @@ open class EventRepository(
                 filter {
                     eq("is_public", true)
                     eq("active", true)
+                    notOverAt(Instant.now().truncatedTo(ChronoUnit.SECONDS))
                 }
                 order("starts_at", Order.ASCENDING)
                 limit(DISCOVER_LIMIT.toLong())
@@ -280,6 +314,8 @@ open class EventRepository(
         private const val CUED_IN_RPC = "set_event_cued_in"
         private const val MY_EVENT_PROFILE_RPC = "my_event_profile"
         private const val SET_EVENT_PROFILE_RPC = "set_event_profile"
+        private const val BLOCKED_ATTENDEES_RPC = "blocked_attendees"
+        private const val BLOCKED_ATTENDEES_BY_CODE_RPC = "blocked_attendees_by_code"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.

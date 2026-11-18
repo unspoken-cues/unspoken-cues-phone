@@ -8,7 +8,7 @@ Welcome → Sign in/Create account is implemented by `AuthFlow` in `Screens.kt`.
 
 `AuthRepository.signUp` may create an account without a session when email confirmation is enabled. It reports `EmailConfirmationRequiredException`, and the user must confirm then sign in. The SQL Auth trigger creates the profile row; profile onboarding is separate. Successful login changes SDK session state, which drives navigation instead of an explicit “login success” callback.
 
-Sign out calls SDK `signOut` in a best-effort coroutine. The root returns to Cue selection and closes Settings, but actual account clearing follows NotAuthenticated. A failed sign-out is currently suppressed. There is no app UI for account deletion, email change, admin roles or social login.
+Sign out calls SDK `signOut` in a best-effort coroutine. The root returns to Cue selection and closes Settings, but actual account clearing follows NotAuthenticated. A failed sign-out is currently suppressed. Settings → Delete account confirms, best-effort deletes the user's Storage images, calls `delete_my_account`, then clears the session locally; a failed RPC shows an error and keeps the user signed in. There is no app UI for email change, admin roles or social login.
 
 ## Password recovery
 
@@ -47,9 +47,9 @@ Private visibility is **not full revocation**: public profile reads are disabled
 
 ## Events
 
-Events screen has Upcoming, Discover and Past views. My-events data currently comes from an unfiltered RLS-limited query; since public events are also readable, unrelated public events can appear in Upcoming/Past. Discover queries active public events ordered by start time, limited to 60 before client-side removal of past events. Tags filter by **all** selected tags; changing subtab clears selection.
+Events screen has Upcoming, Discover and Past views. My-events data currently comes from an unfiltered RLS-limited query; since public events are also readable, unrelated public events can appear in Upcoming/Past. Discover queries active public events that are not yet over (same rule as `effectiveEnd`, applied on the server), ordered by start time, limited to 60. Tags filter by **all** selected tags; changing subtab clears selection.
 
-Hosting collects name, details, start/end, place, cover, tags and discoverability. Name and end-after-start are required in the UI. Initial start is the current local hour truncated then advanced two hours; initial duration is two hours. Moving start keeps duration. Photo-picker cover upload happens immediately, before event creation. Tags normalize to lowercase ASCII alphanumeric/hyphen, at most five tags of 20 characters. The repository expects already normalized tags. Host name is a snapshot, not a live profile join. Repository creates a six-character code from an alphabet without `0/O/1/I/L` and retries unique-constraint collisions up to five total inserts. The host is not automatically added as an event member.
+Hosting collects name, details, start/end, place, cover, tags and discoverability. Name and end-after-start are required in the UI. Initial start is the current local hour truncated then advanced two hours; initial duration is two hours. Moving start keeps duration. Photo-picker cover upload happens immediately, before event creation. Tags normalize to lowercase ASCII alphanumeric/hyphen, at most five tags of 20 characters. The repository expects already normalized tags. Host name is a snapshot, not a live profile join. Repository creates an eight-character code (older events keep their six-character codes) from an alphabet without `0/O/1/I/L` and retries unique-constraint collisions up to five total inserts. The host is not automatically added as an event member.
 
 Joining accepts typed or scanned raw codes, with UI validation of 4–8 alphanumeric characters. The RPC trims/case-normalizes, checks `active`, inserts membership idempotently and returns the event. Existing membership retains its RSVP; joining twice does not change Maybe to Going. A new membership defaults to Going. Event QR contains only the join code, not the card URI.
 

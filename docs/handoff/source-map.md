@@ -16,7 +16,7 @@ Return to the [handoff index](README.md). All paths below are relative to the ph
 | `data/EventRepository.kt` | EventDraft/insert/member payloads, list/detail/create/join/RSVP/end/leave/delete and error mapping |
 | `data/EventDto.kt` | Event/member row decoding, timestamp conversion, RSVP mapping and member-to-profile join |
 | `data/AvatarRepository.kt` | Avatar/card image upload; separate row URL writes occur in root callbacks |
-| `data/AvatarHelpers.kt` | Bucket/path/URL constants, scaledSize and sampling calculations |
+| `data/AvatarHelpers.kt` | Bucket/path/URL constants, `safeImage` remote-image allowlist, scaledSize and sampling calculations |
 | `data/ImageCompression.kt` | Android content decoding, downsampling, EXIF rotation, JPEG encoding |
 | `data/EventCoverRepository.kt` | Public versioned event-cover upload and URL helpers |
 | `data/WatchSync.kt` | Compose-driven Data Layer publishing/retry, persistent publisher revision generation, Task-to-coroutine adapter |
@@ -25,7 +25,7 @@ Return to the [handoff index](README.md). All paths below are relative to the ph
 
 | Source | Key definitions |
 | --- | --- |
-| `model/Models.kt` | CueStatus/WatchConnection/ThemeMode, Profile and picture precedence, Event/Attendee/Rsvp, attendee visibility, join-code rules, CollectedCard/SwapResult, card URI/token parser, MockData |
+| `model/Models.kt` | CueStatus/WatchConnection/ThemeMode, Profile and picture precedence, Event/Attendee/Rsvp, attendee visibility, join-code rules, CollectedCard/SwapResult, card URI/token parser |
 | `model/Onboarding.kt` | Required name/preference-or-boundary rules; AppPhase selection |
 | `model/EventSchedule.kt` | Upcoming/Live/Past, missing-end fallback, sorting, tag normalization/filtering, date labels and counts |
 | `model/Binder.kt` | Per-cue counts and combined text/cue search |

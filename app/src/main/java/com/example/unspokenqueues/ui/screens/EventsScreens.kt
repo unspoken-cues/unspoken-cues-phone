@@ -95,6 +95,7 @@ import com.example.unspokenqueues.model.JOIN_CODE_MAX_LENGTH
 import com.example.unspokenqueues.model.MAX_TAGS_PER_EVENT
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
+import com.example.unspokenqueues.model.blockedAttendeeWarning
 import com.example.unspokenqueues.model.dayHeader
 import com.example.unspokenqueues.model.filterByTags
 import com.example.unspokenqueues.model.formatDay
@@ -170,6 +171,8 @@ fun EventsScreen(
     var joining by remember { mutableStateOf(false) }
     var joinError by remember { mutableStateOf<String?>(null) }
     var rsvpError by remember { mutableStateOf<String?>(null) }
+    // Blocked people going, and how to join anyway; null when no warning is up.
+    var blockedWarning by remember { mutableStateOf<Pair<List<String>, () -> Unit>?>(null) }
     val scope = rememberCoroutineScope()
     val zone = remember { ZoneId.systemDefault() }
     val now = remember(mine, discover) { Instant.now() }
@@ -194,13 +197,21 @@ fun EventsScreen(
         }
     }
 
-    fun join(text: String) {
+    // [checked] once the user has chosen Join anyway.
+    fun join(text: String, checked: Boolean = false) {
         if (joining) return
         joinError = null
         joining = true
         scope.launch {
             try {
-                onOpen(repo.joinByCode(text))
+                // Hosting or already in it: joining again changes nothing, so there is nothing to warn about.
+                val inIt = mine.orEmpty().any { it.joinCode.equals(text.trim(), ignoreCase = true) }
+                val blocked = if (checked || inIt) emptyList() else blockedOrNone { repo.blockedAttendeesByCode(text) }
+                if (blocked.isNotEmpty()) {
+                    blockedWarning = blocked to { join(text, checked = true) }
+                } else {
+                    onOpen(repo.joinByCode(text))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -212,10 +223,15 @@ fun EventsScreen(
     }
 
     // One-tap RSVP from the Discover feed.
-    fun quickRsvp(event: Event) {
+    fun quickRsvp(event: Event, checked: Boolean = false) {
         rsvpError = null
         scope.launch {
             try {
+                val blocked = if (checked) emptyList() else blockedOrNone { repo.blockedAttendees(event.id) }
+                if (blocked.isNotEmpty()) {
+                    blockedWarning = blocked to { quickRsvp(event, checked = true) }
+                    return@launch
+                }
                 repo.rsvp(event.id, userId, Rsvp.GOING)
                 rsvps = rsvps + (event.id to Rsvp.GOING)
                 discover = discover?.map { if (it.id == event.id) it.copy(goingCount = it.goingCount + 1) else it }
@@ -293,7 +309,7 @@ fun EventsScreen(
                         shownTab == 1 -> DiscoverList(
                             events = filterByTags(feed.orEmpty(), activeTags),
                             now = now, zone = zone, userId = userId, rsvps = rsvps,
-                            onRsvp = ::quickRsvp, onOpen = onOpen,
+                            onRsvp = { quickRsvp(it) }, onOpen = onOpen,
                         )
                         else -> PastList(
                             events = filterByTags(past.orEmpty(), activeTags),
@@ -314,8 +330,8 @@ fun EventsScreen(
         )
     }
 
-    // Hidden while the scanner is up so the two dialogs don't stack.
-    if (joinOpen && !scanning) {
+    // Hidden while the scanner or a warning is up so the dialogs don't stack.
+    if (joinOpen && !scanning && blockedWarning == null) {
         JoinEventDialog(
             code = code,
             onCodeChange = {
@@ -349,6 +365,37 @@ fun EventsScreen(
             hint = "Point the camera at the event's QR code",
         )
     }
+    blockedWarning?.let { (names, joinAnyway) ->
+        BlockedAttendeeDialog(names, onJoin = joinAnyway, onDismiss = { blockedWarning = null })
+    }
+}
+
+// The warning is advisory: if the check itself fails (e.g. offline), joining goes ahead as it did
+// before the warning existed rather than stopping the user.
+private suspend fun blockedOrNone(check: suspend () -> List<String>): List<String> =
+    try {
+        check()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+/** Asks before joining an event that [names], people the user blocked, are going to. */
+@Composable
+private fun BlockedAttendeeDialog(names: List<String>, onJoin: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (names.size == 1) "Someone you blocked is going" else "People you blocked are going") },
+        text = { Text(blockedAttendeeWarning(names)) },
+        confirmButton = {
+            TextButton({
+                onDismiss()
+                onJoin()
+            }) { Text("Join anyway") }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -867,6 +914,8 @@ private fun EventDetailContent(
     var waveRefreshAfterBlock by remember { mutableIntStateOf(0) }
     var blocking by remember { mutableStateOf<Attendee?>(null) }
     var reporting by remember { mutableStateOf<Attendee?>(null) }
+    // Blocked people going, and how to RSVP anyway; null when no warning is up.
+    var blockedWarning by remember { mutableStateOf<Pair<List<String>, () -> Unit>?>(null) }
     // True while ending, leaving, deleting or answering is in flight; only one runs at a time.
     var working by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -932,7 +981,15 @@ private fun EventDetailContent(
         }
     }
 
-    fun answer(choice: Rsvp) = perform("Couldn't save your RSVP. Check your connection and try again.") {
+    // Only a first RSVP joins, so only it checks for blocked people; [checked] once they chose Join anyway.
+    fun answer(choice: Rsvp, checked: Boolean = false): Unit = perform("Couldn't save your RSVP. Check your connection and try again.") {
+        if (rsvp == null && !checked) {
+            val blocked = blockedOrNone { repo.blockedAttendees(event.id) }
+            if (blocked.isNotEmpty()) {
+                blockedWarning = blocked to { answer(choice, checked = true) }
+                return@perform
+            }
+        }
         repo.rsvp(event.id, userId, choice)
         membershipLoaded = true
         val wasGoing = rsvp == Rsvp.GOING
@@ -1225,6 +1282,9 @@ private fun EventDetailContent(
             },
             onDismiss = { editingEventProfile = false },
         )
+    }
+    blockedWarning?.let { (names, rsvpAnyway) ->
+        BlockedAttendeeDialog(names, onJoin = rsvpAnyway, onDismiss = { blockedWarning = null })
     }
     blocking?.let { person ->
         ConfirmBlockDialog(person.name, onConfirm = { block(person) }, onDismiss = { blocking = null })

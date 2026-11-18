@@ -85,6 +85,11 @@ private class FakeEventRepository(
         events.firstOrNull { it.active && it.joinCode.equals(code.trim(), ignoreCase = true) }
             ?: error("No active event with that code")
 
+    // Nobody here is blocked; BlockedAttendeeWarningTest covers the warning.
+    override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
+
+    override suspend fun blockedAttendeesByCode(code: String) = emptyList<String>()
+
     override suspend fun endEvent(eventId: String) {
         ended += eventId
     }

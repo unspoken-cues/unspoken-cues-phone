@@ -19,6 +19,7 @@ All Auth methods use SDK APIs under the project's Auth service. Email/password i
 | `signIn(email,password)` | `signInWith(Email)` | Trims email, stores session through SDK |
 | `signUp(email,password)` | `signUpWith(Email)` | Trims email; throws `EmailConfirmationRequiredException` if signup returns no session |
 | `signOut()` | `auth.signOut()` | SDK sign-out; root caller currently discards failure |
+| `deleteAccount()` | Storage delete, RPC `delete_my_account`, `clearSession` | Best-effort deletes `avatars/<uid>/avatar.jpg`, `card.jpg` and listed `event-covers/<uid>/*`; then the RPC (throws and stays signed in on failure); then clears the local session |
 | `requestPasswordReset(email)` | `resetPasswordForEmail` | Trimmed email, redirect `unspokencues://password-reset` |
 | `recoverPassword(link)` | `awaitInitialization`, `parseSessionFromUrl`, `retrieveUser`, `importSession` | Requires dedicated callback and recovery type; validates user before import |
 | `updatePassword(password)` | `updateUser { password = ... }` | Waits for initialization and requires a current session; caller controls recovery readiness |
@@ -72,7 +73,7 @@ RPCs are logical POSTs under `/rest/v1/rpc/<function>`. The swaps SELECT has no 
 | `createEvent(hostId,name,details)` | Delegates to draft overload | No time/place supplied by this overload |
 | `createEvent(hostId,draft)` | INSERT `events`, select returned row | Random join_code; retries `23505` up to 5 total attempts |
 | `myEvents(userId)` | SELECT `events`, created_at descending | userId parameter unused; all RLS-readable events, including unrelated public ones |
-| `discoverEvents()` | SELECT `events`, is_public=true and active=true, starts_at ascending, limit 60 | UI removes time-past rows after limit |
+| `discoverEvents()` | SELECT `events`, is_public=true and active=true and `or=(ends_at.gt.<now>,and(ends_at.is.null,starts_at.gt.<now-3h>),starts_at.is.null)`, starts_at ascending, limit 60 | Past events are dropped on the server before the limit; the UI filter remains for rows that end while shown |
 | `event(eventId)` | SELECT `events` where id matches | First mapped event or null for no readable row; network errors still throw |
 | `myRsvps(userId)` | SELECT `event_members` where user_id matches | Map eventId → known `going`/`maybe`; unknown wire values skipped |
 | `eventAttendees(eventId)` | SELECT members ordered joined_at ascending, then profiles where id IN member IDs | Joined profiles only; RLS-hidden profiles skipped |

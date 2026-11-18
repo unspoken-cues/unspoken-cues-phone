@@ -125,7 +125,7 @@ const val JOIN_CODE_MIN_LENGTH = 4
 const val JOIN_CODE_MAX_LENGTH = 8
 
 /** Length of the join codes the app generates for new events. */
-const val JOIN_CODE_LENGTH = 6
+const val JOIN_CODE_LENGTH = 8
 
 // Capital letters and digits, minus the ones people mix up when reading a code aloud or off a
 // screen (0/O, 1/I/L).
@@ -170,6 +170,13 @@ enum class ReportReason(val wire: String, val label: String) {
 /** Someone the signed-in user has blocked, as listed for unblocking. */
 data class BlockedUser(val userId: String, val name: String)
 
+/** The warning before joining an event that [names] (people the user blocked) are going to. */
+fun blockedAttendeeWarning(names: List<String>): String {
+    val shown = names.map { it.ifBlank { "Someone" } }
+    val list = if (shown.size == 1) shown[0] else shown.dropLast(1).joinToString(", ") + " and " + shown.last()
+    return "$list, who you blocked, ${if (shown.size == 1) "is" else "are"} going to this event."
+}
+
 /** How an attempt to collect someone's card from a scan or a link ended. */
 sealed interface SwapResult {
     data class Swapped(val card: CollectedCard) : SwapResult
@@ -195,15 +202,4 @@ fun cardTokenFrom(text: String): String? {
     val token = cardLinkPattern.find(text)?.groupValues?.get(1)
         ?: text.trim().takeIf { bareTokenPattern.matches(it) }
     return token?.lowercase()
-}
-
-// Mock data until the backend decision is made (Sprint 1).
-object MockData {
-    val profile = Profile(
-        displayName = "Alex Rivera",
-        bio = "Designer. Coffee first, conversation second.",
-        preferences = listOf("Text over calls", "Small groups", "Direct feedback"),
-        boundaries = listOf("No hugs without asking", "No photos"),
-        isPublic = true,
-    )
 }

@@ -1,6 +1,8 @@
 package com.example.unspokenqueues.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -89,5 +91,54 @@ class AvatarHelpersTest {
             "https://ref.supabase.co/storage/v1/object/public/avatars/u1/avatar.jpg?v=7",
             avatarPublicUrl(" https://ref.supabase.co/ ", "u1", 7),
         )
+    }
+
+    // ---------- safeImage ----------
+
+    private val project = "https://ref.supabase.co"
+
+    @Test
+    fun safeImage_acceptsTheProjectsPublicStorageUrls() {
+        for (url in listOf(
+            avatarPublicUrl(project, "u1", 42),
+            cardImagePublicUrl(project, "u1", 42),
+            eventCoverPublicUrl(project, "u1", 42),
+            "$project/storage/v1/object/public/avatars/u1/avatar.jpg?t=1700000000",
+        )) {
+            assertEquals(url, safeImage(url, project))
+        }
+        // The project URL as configured may carry a trailing slash or whitespace.
+        val url = avatarPublicUrl(project, "u1", 1)
+        assertEquals(url, safeImage(url, " $project/ "))
+    }
+
+    @Test
+    fun safeImage_rejectsOtherHostsAndLookAlikes() {
+        for (url in listOf(
+            "https://evil.example/storage/v1/object/public/avatars/u1/avatar.jpg",
+            "https://ref.supabase.co.evil.com/storage/v1/object/public/avatars/u1/avatar.jpg",
+            "https://ref.supabase.com/storage/v1/object/public/avatars/u1/avatar.jpg",
+            "https://ref.supabase.co@evil.com/storage/v1/object/public/avatars/u1/avatar.jpg",
+            "http://ref.supabase.co/storage/v1/object/public/avatars/u1/avatar.jpg",
+            // Same host, but not the public object path.
+            "https://ref.supabase.co/storage/v1/object/sign/avatars/u1/avatar.jpg",
+            "https://ref.supabase.co/rest/v1/profiles",
+            "",
+            "   ",
+        )) {
+            assertNull(url, safeImage(url, project))
+        }
+    }
+
+    @Test
+    fun safeImage_rejectsEverythingWhenTheProjectUrlIsBlank() {
+        assertNull(safeImage("/storage/v1/object/public/avatars/u1/avatar.jpg", ""))
+    }
+
+    @Test
+    fun safeImage_passesLocalImagesAndNull() {
+        val local = java.io.File("photo.jpg")
+        assertSame(local, safeImage(local, project))
+        assertNull(safeImage(null, project))
     }
 }
