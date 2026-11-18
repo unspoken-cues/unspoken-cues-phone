@@ -754,7 +754,8 @@ begin
          case when v.full_view or p.show_boundaries  then p.boundaries  else '{}'::text[] end,
          case when v.full_view or p.show_status      then p.status                        end
   from public.event_members m
-  join public.profiles p on p.id = m.user_id
+  -- event profile: per-event name, bio and cue override the main profile here.
+  join public.event_effective_profiles(p_event_id) p on p.id = m.user_id
   cross join lateral (
     select m.user_id = me or public.active_swap(me, m.user_id) as full_view
   ) v
@@ -1047,7 +1048,8 @@ begin
   end if;
   select coalesce((select w.receive_waves from public.event_wave_preferences w
     where w.event_id = p_event_id and w.user_id = me), false) into opted;
-  select opted and exists (select 1 from public.events e join public.profiles p on p.id = me
+  -- event profile: eligibility uses the caller's cue for this event.
+  select opted and exists (select 1 from public.events e join public.event_effective_profiles(p_event_id) p on p.id = me
     where e.id = p_event_id and e.active
       and (coalesce(e.ends_at, e.starts_at + interval '3 hours') is null
         or coalesce(e.ends_at, e.starts_at + interval '3 hours') > clock_timestamp())
@@ -1057,14 +1059,16 @@ begin
       'user_id', p.id, 'display_name', p.display_name,
       'sent', exists (select 1 from public.event_waves w where w.event_id = p_event_id
         and w.sender_id = me and w.recipient_id = p.id)) order by p.display_name, p.id), '[]'::jsonb)
-    into targets from public.profiles p join public.event_wave_preferences pref on pref.user_id = p.id
+    -- event profile: targets use per-event names and cues.
+    into targets from public.event_effective_profiles(p_event_id) p join public.event_wave_preferences pref on pref.user_id = p.id
     where pref.event_id = p_event_id and pref.receive_waves and p.id <> me
       and public.event_wave_visible(p, me)
       and public.event_wave_participant(p_event_id, p.id);
     select coalesce(jsonb_agg(jsonb_build_object(
       'sender_id', p.id, 'sender_name', p.display_name, 'created_at', w.created_at)
       order by w.created_at desc, w.sender_id), '[]'::jsonb)
-    into inbox from public.event_waves w join public.profiles p on p.id = w.sender_id
+    -- event profile: inbox uses per-event names and cues.
+    into inbox from public.event_waves w join public.event_effective_profiles(p_event_id) p on p.id = w.sender_id
       join public.event_wave_preferences pref on pref.event_id = w.event_id and pref.user_id = p.id
     where w.event_id = p_event_id and w.recipient_id = me and pref.receive_waves
       and public.event_wave_visible(p, me)
@@ -1114,7 +1118,8 @@ begin
   if not ev.active or coalesce(ev.ends_at, ev.starts_at + interval '3 hours') <= clock_timestamp()
     or not public.event_wave_participant(p_event_id, me)
     or not public.event_wave_participant(p_event_id, p_recipient_id)
-    or (select count(*) from public.profiles p where p.id in (me, p_recipient_id)
+    -- event profile: both cues are checked as set for this event.
+    or (select count(*) from public.event_effective_profiles(p_event_id) p where p.id in (me, p_recipient_id)
       and public.event_wave_visible(p, me)) <> 2
     or (select count(*) from public.event_wave_preferences pref where pref.event_id = p_event_id
       and pref.user_id in (me, p_recipient_id) and pref.receive_waves) <> 2 then
@@ -1222,7 +1227,8 @@ begin
          case when v.full_view or p.show_status      then p.status                        end,
          m.cued_in -- directory:
   from public.event_members m
-  join public.profiles p on p.id = m.user_id
+  -- event profile: per-event name, bio and cue override the main profile here.
+  join public.event_effective_profiles(p_event_id) p on p.id = m.user_id
   cross join lateral (
     select m.user_id = me or public.active_swap(me, m.user_id) as full_view
   ) v
@@ -1254,6 +1260,119 @@ returns boolean language sql stable security definer set search_path = '' as $$
         and m.cued_in))); -- directory:
 $$;
 revoke all on function public.event_wave_participant(uuid, uuid) from public, anon, authenticated;
+
+commit;
+
+-- 20. Event profiles (same definitions as 202611170004_event_profiles.sql). The migration also
+--     redefines event_attendees (sections 16 and 19), event_wave_state and send_event_wave (section 18);
+--     those changes are made in place above, each marked "event profile:".
+begin;
+
+-- Optional per-event name, bio and cue. No row, or a null field, means the main profile's value.
+-- No table access: the owner uses the two RPCs below; others see only effective values through
+-- event_attendees() and the wave RPCs, which still apply every privacy rule on top.
+create table if not exists public.event_profiles (
+  event_id uuid not null references public.events(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  display_name text check (btrim(display_name) <> ''),
+  -- Same 120-character limit the app puts on the main bio.
+  bio text check (btrim(bio) <> '' and char_length(bio) <= 120),
+  status public.cue_status,
+  primary key (event_id, user_id),
+  -- An all-empty override is stored as no row.
+  check (coalesce(display_name, bio, status::text) is not null)
+);
+alter table public.event_profiles enable row level security;
+revoke all on public.event_profiles from public, anon, authenticated;
+
+-- The event's participants (host and members) as profiles rows with their overrides applied,
+-- so callers keep their existing privacy expressions unchanged.
+create or replace function public.event_effective_profiles(p_event_id uuid)
+returns setof public.profiles language plpgsql stable set search_path = '' as $$
+declare
+  p public.profiles;
+  o public.event_profiles;
+begin
+  for p in select pr.* from public.profiles pr where pr.id in (
+      select e.host_id from public.events e where e.id = p_event_id
+      union select m.user_id from public.event_members m where m.event_id = p_event_id) loop
+    select * into o from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = p.id;
+    p.display_name := coalesce(o.display_name, p.display_name);
+    p.bio := coalesce(o.bio, p.bio);
+    p.status := coalesce(o.status, p.status);
+    return next p;
+  end loop;
+end;
+$$;
+revoke all on function public.event_effective_profiles(uuid) from public, anon, authenticated;
+
+-- The caller's own override fields for one event; null fields use the main profile.
+create or replace function public.my_event_profile(p_event_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  me uuid := auth.uid();
+  o public.event_profiles;
+begin
+  -- Not event_wave_participant: a cued-out member still owns their event profile.
+  if me is null or not exists (select 1 from public.events e where e.id = p_event_id and (e.host_id = me
+      or exists (select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))) then
+    raise exception 'Event participant required' using errcode = '42501';
+  end if;
+  select * into o from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = me;
+  return jsonb_build_object('display_name', o.display_name, 'bio', o.bio, 'status', o.status);
+end;
+$$;
+
+-- Replaces the caller's override for one event. A blank or null field clears it; clearing all
+-- three deletes the row.
+create or replace function public.set_event_profile(
+  p_event_id uuid, p_display_name text, p_bio text, p_status public.cue_status)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  me uuid := auth.uid();
+  clean_name text := nullif(btrim(p_display_name), '');
+  clean_bio text := nullif(btrim(p_bio), '');
+begin
+  -- The membership lock stops a concurrent leave; the profile lock serializes a cue change with
+  -- send_event_wave, which locks both profiles before checking cues.
+  perform 1 from public.event_members m where m.event_id = p_event_id and m.user_id = me for key share;
+  perform 1 from public.profiles p where p.id = me for update;
+  -- Not event_wave_participant: a cued-out member still owns their event profile.
+  if me is null or not exists (select 1 from public.events e where e.id = p_event_id and (e.host_id = me
+      or exists (select 1 from public.event_members m where m.event_id = e.id and m.user_id = me))) then
+    raise exception 'Event participant required' using errcode = '42501';
+  end if;
+  if char_length(clean_bio) > 120 then
+    raise exception 'Bio must be 120 characters or fewer' using errcode = '22023';
+  end if;
+  if coalesce(clean_name, clean_bio, p_status::text) is null then
+    delete from public.event_profiles ep where ep.event_id = p_event_id and ep.user_id = me;
+  else
+    insert into public.event_profiles(event_id, user_id, display_name, bio, status)
+      values (p_event_id, me, clean_name, clean_bio, p_status)
+      on conflict (event_id, user_id) do update
+        set display_name = excluded.display_name, bio = excluded.bio, status = excluded.status;
+  end if;
+  return public.my_event_profile(p_event_id);
+end;
+$$;
+
+-- Leaving an event drops the override, so rejoining starts from the main profile.
+create or replace function public.delete_event_profile_on_leave()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  delete from public.event_profiles ep where ep.event_id = old.event_id and ep.user_id = old.user_id;
+  return old;
+end;
+$$;
+drop trigger if exists event_members_delete_event_profile on public.event_members;
+create trigger event_members_delete_event_profile after delete on public.event_members
+  for each row execute function public.delete_event_profile_on_leave();
+revoke all on function public.delete_event_profile_on_leave() from public, anon, authenticated;
+revoke all on function public.my_event_profile(uuid),
+  public.set_event_profile(uuid, text, text, public.cue_status) from public, anon;
+grant execute on function public.my_event_profile(uuid),
+  public.set_event_profile(uuid, text, text, public.cue_status) to authenticated;
 
 commit;
 

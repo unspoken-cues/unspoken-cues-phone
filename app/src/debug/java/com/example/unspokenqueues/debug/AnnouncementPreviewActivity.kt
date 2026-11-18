@@ -28,6 +28,7 @@ import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.model.announcementFeed
@@ -115,6 +116,8 @@ private class AnnouncementSample(private val safety: PreviewSafetyRepository) {
         override suspend fun deleteEvent(eventId: String) { rows.clear() }
         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
         override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) = Unit
+        override suspend fun myEventProfile(eventId: String) = EventProfile()
+        override suspend fun saveEventProfile(eventId: String, profile: EventProfile) = profile
     }
     val announcements = object : AnnouncementRepository() {
         override suspend fun announcements(eventId: String): List<Announcement> = announcementFeed(rows)

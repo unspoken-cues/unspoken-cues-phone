@@ -81,6 +81,16 @@ data class Attendee(val userId: String, val profile: Profile, val status: CueSta
     val name get() = profile.displayName
 }
 
+/**
+ * The signed-in user's own name, bio and cue for one event. A null field uses the main profile's
+ * value there; all null means no override. The global cue (home, card, watch) never uses these.
+ */
+data class EventProfile(val displayName: String? = null, val bio: String? = null, val status: CueStatus? = null)
+
+/** What the event profile editor saves: trimmed, with a blank field meaning "use the main profile". */
+fun eventProfileOf(name: String, bio: String, status: CueStatus?): EventProfile =
+    EventProfile(name.trim().ifEmpty { null }, bio.trim().ifEmpty { null }, status)
+
 // An event hosted by one user; others join it with the join code, or RSVP from the Discover feed
 // when it is public. Everything after [active] has a default so an event made before event pages
 // existed (no time, place, cover or tags) still reads as an event.

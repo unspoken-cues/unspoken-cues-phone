@@ -34,6 +34,7 @@ import com.example.unspokenqueues.model.Announcement
 import com.example.unspokenqueues.model.Attendee
 import com.example.unspokenqueues.model.CueStatus
 import com.example.unspokenqueues.model.Event
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Profile
 import com.example.unspokenqueues.model.Rsvp
 import com.example.unspokenqueues.ui.theme.UnspokenQueuesTheme
@@ -76,6 +77,9 @@ private class FakeEventRepository(
     override suspend fun event(eventId: String): Event? = events.firstOrNull { it.id == eventId }
 
     override suspend fun eventAttendees(eventId: String): List<Attendee> = attendees
+
+    // Never reach the server for the viewer's event profile.
+    override suspend fun myEventProfile(eventId: String) = EventProfile()
 
     override suspend fun joinByCode(code: String): Event =
         events.firstOrNull { it.active && it.joinCode.equals(code.trim(), ignoreCase = true) }
@@ -313,7 +317,8 @@ class EventsScreenTest {
 
     @Test
     fun member_canCueOut_andBackIn_whichHidesAndRestoresWaves() {
-        val repo = FakeEventRepository(attendees = everyone.take(2))
+        // The event makes "green" a member (myRsvps answers going), which is what shows waves.
+        val repo = FakeEventRepository(events = listOf(mixer), attendees = everyone.take(2))
         showDetail(repo, userId = "green")
         val waves = compose.onNodeWithText("Refresh waves")
         waves.performScrollTo().assertIsDisplayed()

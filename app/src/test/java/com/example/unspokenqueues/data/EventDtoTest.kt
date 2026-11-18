@@ -1,6 +1,9 @@
 package com.example.unspokenqueues.data
 
+import com.example.unspokenqueues.model.CueStatus
+import com.example.unspokenqueues.model.EventProfile
 import com.example.unspokenqueues.model.Rsvp
+import com.example.unspokenqueues.model.eventProfileOf
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -48,6 +51,32 @@ class EventDtoTest {
         assertNull("".toInstantOrNull())
         assertNull(null.toInstantOrNull())
         assertNull("soon".toInstantOrNull())
+    }
+
+    @Test
+    fun eventProfileRow_withNoOverride_isEmpty_soTheMainProfileApplies() {
+        assertEquals(
+            EventProfile(),
+            json.decodeFromString<EventProfileRow>("""{"display_name":null,"bio":null,"status":null}""").toEventProfile(),
+        )
+    }
+
+    @Test
+    fun eventProfileRow_keepsSetFields_andAnUnknownCueFallsBack() {
+        assertEquals(
+            EventProfile("Sam", null, CueStatus.YELLOW),
+            json.decodeFromString<EventProfileRow>("""{"display_name":"Sam","bio":null,"status":"YELLOW"}""").toEventProfile(),
+        )
+        assertEquals(
+            EventProfile(bio = "Pool"),
+            json.decodeFromString<EventProfileRow>("""{"display_name":" ","bio":"Pool","status":"BLUE"}""").toEventProfile(),
+        )
+    }
+
+    @Test
+    fun eventProfileOf_trimsAndTreatsBlankAsUseMainProfile() {
+        assertEquals(EventProfile("Sam", null, CueStatus.GREEN), eventProfileOf("  Sam ", "   ", CueStatus.GREEN))
+        assertEquals(EventProfile(), eventProfileOf("", "", null))
     }
 
     @Test

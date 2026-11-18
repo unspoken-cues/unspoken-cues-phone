@@ -35,3 +35,5 @@ Update the matching topic when changing a repository method, SQL policy/function
 See [event waves](quick-reactions.md) for quick-reaction setup, authorization, verification and rollback.
 
 See [event directory](event-directory.md) for Cue In / Cue Out setup, authorization, verification and rollback.
+
+See [event profiles](event-profiles.md) for per-event name, bio and cue overrides: setup, authorization, verification and rollback.
