@@ -112,6 +112,7 @@ private class AnnouncementSample(private val safety: PreviewSafetyRepository) {
             if (userId == "sample-member") mapOf(event.id to answer) else emptyMap()
         override suspend fun event(eventId: String): Event = this@AnnouncementSample.event
         override suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) { this@AnnouncementSample.answer = answer }
+        override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
         override suspend fun endEvent(eventId: String) { event = event.copy(active = false) }
         override suspend fun deleteEvent(eventId: String) { rows.clear() }
         override suspend fun leaveEvent(eventId: String, userId: String) = Unit

@@ -47,6 +47,8 @@ private class FakeEventProfileRepository(var stored: EventProfile = EventProfile
 
     override suspend fun event(eventId: String): Event? = null
 
+    override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
+
     // Like the server, the list always holds the viewer's own (cued-in) row; waves wait for it.
     override suspend fun eventAttendees(eventId: String) =
         listOf(Attendee("member", Profile("Alex Rivera", "", emptyList(), emptyList(), true), CueStatus.GREEN))

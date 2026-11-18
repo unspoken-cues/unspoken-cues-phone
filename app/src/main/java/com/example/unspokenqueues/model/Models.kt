@@ -170,6 +170,13 @@ enum class ReportReason(val wire: String, val label: String) {
 /** Someone the signed-in user has blocked, as listed for unblocking. */
 data class BlockedUser(val userId: String, val name: String)
 
+/** The warning before joining an event that [names] (people the user blocked) are going to. */
+fun blockedAttendeeWarning(names: List<String>): String {
+    val shown = names.map { it.ifBlank { "Someone" } }
+    val list = if (shown.size == 1) shown[0] else shown.dropLast(1).joinToString(", ") + " and " + shown.last()
+    return "$list, who you blocked, ${if (shown.size == 1) "is" else "are"} going to this event."
+}
+
 /** How an attempt to collect someone's card from a scan or a link ended. */
 sealed interface SwapResult {
     data class Swapped(val card: CollectedCard) : SwapResult

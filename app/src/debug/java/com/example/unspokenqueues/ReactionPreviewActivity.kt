@@ -57,6 +57,7 @@ class ReactionPreviewActivity : ComponentActivity() {
                         override suspend fun myRsvps(userId: String) = mapOf("sample-event" to Rsvp.GOING)
                         override suspend fun event(eventId: String): Event? = null
                         override suspend fun rsvp(eventId: String, userId: String, answer: Rsvp) = Unit
+                        override suspend fun blockedAttendees(eventId: String) = emptyList<String>()
                         override suspend fun leaveEvent(eventId: String, userId: String) = Unit
                         override suspend fun setCuedIn(eventId: String, cuedIn: Boolean) = Unit
                         override suspend fun myEventProfile(eventId: String) = EventProfile()

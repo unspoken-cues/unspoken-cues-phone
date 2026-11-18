@@ -194,6 +194,22 @@ open class EventRepository(
             .decodeAs<EventRow>()
             .toEvent()
 
+    /**
+     * Names of people the signed-in user blocked who are going to this event, to warn them before
+     * they join. The server lists only the host and members any attendee could see anyway, and
+     * answers nothing for an event the user can't read.
+     */
+    open suspend fun blockedAttendees(eventId: String): List<String> =
+        postgrest.rpc(BLOCKED_ATTENDEES_RPC, buildJsonObject { put("p_event_id", eventId) })
+            .decodeList<BlockedUserRow>()
+            .map { it.displayName }
+
+    /** Like [blockedAttendees], for the active event with this join code; empty if there is none. */
+    open suspend fun blockedAttendeesByCode(code: String): List<String> =
+        postgrest.rpc(BLOCKED_ATTENDEES_BY_CODE_RPC, buildJsonObject { put("code", code.trim()) })
+            .decodeList<BlockedUserRow>()
+            .map { it.displayName }
+
     /** Ends an event so nobody else can join it. Only has an effect for the host. */
     open suspend fun endEvent(eventId: String) {
         postgrest.from(EVENTS).update(mapOf("active" to false)) {
@@ -280,6 +296,8 @@ open class EventRepository(
         private const val CUED_IN_RPC = "set_event_cued_in"
         private const val MY_EVENT_PROFILE_RPC = "my_event_profile"
         private const val SET_EVENT_PROFILE_RPC = "set_event_profile"
+        private const val BLOCKED_ATTENDEES_RPC = "blocked_attendees"
+        private const val BLOCKED_ATTENDEES_BY_CODE_RPC = "blocked_attendees_by_code"
         private const val CODE_ATTEMPTS = 5
         private const val DISCOVER_LIMIT = 60
         // Postgres error code for a unique-constraint violation.
