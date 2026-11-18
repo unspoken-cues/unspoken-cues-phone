@@ -59,6 +59,13 @@
             </intent-filter>
         </activity>
 
+        <service android:name=".alerts.AnnouncementRequestService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.REQUEST_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/unspoken-cues/announcements/v1/poll" />
+            </intent-filter>
+        </service>
+
         <!-- Lets the camera app save a captured profile photo into our cache directory. -->
         <provider
             android:name="androidx.core.content.FileProvider"
