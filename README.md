@@ -91,3 +91,5 @@ device where the app is installed, enter matching new passwords, then sign out a
 with the new password. Expired links should offer a return to sign-in to request another.
 The confirmation after requesting a link deliberately does not reveal whether an email
 belongs to an account. Automated UI tests use callbacks and do not send real emails.
+
+[Watch event alert setup and paired-device checks](docs/design/watch-event-alerts.md)

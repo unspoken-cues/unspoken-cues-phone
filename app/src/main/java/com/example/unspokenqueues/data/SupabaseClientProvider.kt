@@ -36,7 +36,10 @@ object SupabaseClientProvider {
             supabaseUrl = url,
             supabaseKey = key,
         ) {
-            install(Auth)
+            install(Auth) {
+                // A Wear listener can need the current session while the phone activity is stopped.
+                enableLifecycleCallbacks = false
+            }
             install(Postgrest)
             install(Storage)
         }

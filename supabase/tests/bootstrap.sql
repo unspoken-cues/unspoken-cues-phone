@@ -6,6 +6,9 @@ create table auth.users (id uuid primary key, raw_user_meta_data jsonb not null 
 create function auth.uid() returns uuid language sql stable as $$
   select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
 $$;
+create function auth.jwt() returns jsonb language sql stable as $$
+  select nullif(current_setting('request.jwt.claims', true), '')::jsonb
+$$;
 create schema storage;
 create table storage.buckets (id text primary key, name text, public boolean,
   file_size_limit bigint, allowed_mime_types text[]);

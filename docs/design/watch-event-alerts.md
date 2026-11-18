@@ -1,0 +1,44 @@
+# Watch notifications for event announcements
+
+A participant can opt in on their watch to a discreet system notification for a newly published host announcement in an event they can access. Use Android notification channels and system-managed vibration so quiet modes, notification permissions and user settings apply.
+
+## Delivery and privacy
+
+Use the phone’s authenticated Supabase session and existing announcement access policies. Select only metadata required for delivery. A new event announcement must reach the watch without opening the event detail feed or pressing refresh. Use lifecycle-independent periodic background work or supported push. Document expected latency, connectivity and scheduling limits. Scope delivery to current memberships, skip the user’s own posts, and avoid cross-account delivery after sign-out or switching. Recheck access where your transport design needs it. Durable cursors/receipts distinguish first enable, retries and reconnects. Existing announcements must not trigger an initial burst.
+
+Use an isolated Data Layer path/version, authenticated-account generation or equivalent privacy binding, and bounded state. The watch uses a native notification channel, permission on applicable APIs, and explicit opt-in with a clear disable control. Show generic copy on the lock screen. Do not include announcement bodies, names, credentials or user IDs in notifications or wire payloads. A disabled or denied device must not vibrate, and re-enabling must not replay disabled-period history. Deliver each eligible announcement once or deliberately coalesce a burst. Support both features merging in either order.
+
+## Acceptance tests
+
+- N1. Opt-in while signed in establishes a baseline without alerting for historical posts. A newly posted announcement for a joined event produces a native watch notification in background use.
+- N2. Outsider and self-authored updates produce no alert. Logout/account switching prevents previous-account alerts. No sensitive data appears on the wire or lock screen.
+- N3. Repeated polls, duplicate delivery and service/process restart do not repeat notifications. Connection failure is retryable; cursors do not skip an unacknowledged operation without a documented coalescing rule.
+- N4. Opt-out, platform permission denial and channel settings are respected. Re-enable starts from a fresh baseline. Use the system haptic policy with a non-intrusive default.
+- N5. Automated tests cover source/filter, deduplication, delivery, timing and preference changes. Verify notification posting on a Wear emulator where available. Run debug builds, unit suites, Android test compilation and lint in both repositories. Document deployment and manual paired-device verification.
+
+## Paired builds
+
+Install the phone APK on the phone and the Wear APK on the watch. Both debug variants already use the same application ID. For a paired release using the current phone ID, build the watch with `sh gradlew :app:assembleRelease -PcompanionApplicationId=com.example.unspokenqueues`. Sign both artifacts with the same release certificate. An existing store listing keeps its original package identity. A release with a different ID from the installed phone cannot use this transport.
+
+## Implemented delivery
+
+In **Options → Event alerts**, enable alerts and grant notification permission if prompted. The watch schedules an immediate baseline check and a persisted Android job with a 15-minute period. The settings page shows “Waiting for your signed-in phone to start checking” until the first successful baseline. Posts before that baseline belong to history. Android can defer jobs during Doze, battery restrictions or disconnection. There is no fixed delivery deadline. An enabled watch, one reachable compatible phone and phone internet access are required. Force-stopped apps must be opened again.
+
+The watch looks up the phone capability `uc_announcement_source_v1` and calls `MessageClient.sendRequest` on `/unspoken-cues/announcements/v1/poll`. Google Play services can start the phone listener when its activity is closed. The phone's single Supabase auth client restores and refreshes its session independently of the activity lifecycle. The phone reads the cursor via `public.watch_announcement_cursor` and checks its session again before replying. Offline failures preserve the last acknowledged cursor. The next successful poll checks current membership and the current login again. This protocol works independently of the watch cue sync service.
+
+A baseline request or signed-out response is empty. Every other frame is exactly 24 bytes in big-endian order. The first 16 bytes contain an opaque generation derived from the authenticated account and its login session. The last eight bytes contain a positive server timestamp in Unix microseconds. Only the generation and watermark cross the Data Layer. A fresh login changes the generation even for the same user.
+
+The SQL helper runs with the caller’s privileges. It joins the caller’s current membership with readable events and announcements, excludes hosted events and requires the announcement timestamp to fall within the current membership. The first poll of each generation returns the database clock. Subsequent polls return the greatest eligible announcement timestamp after the acknowledged watermark, or the same watermark when the query finds no eligible updates. The watch uses one generic notification for the entire interval through that timestamp. Announcements with identical timestamps and delayed commits dated inside an already notified interval are covered by that interval. Leaving before a retry removes the event from the next eligibility check.
+
+The watch persists one opt-in identifier, one acknowledged generation and timestamp, and one in-flight delivery flag. Disable, app/channel blocking and fresh enable invalidate old callbacks. A fresh generation or signed-out response cancels the old notification and establishes a silent baseline. Acknowledgment follows the Android notification call. After an interruption between submission and acknowledgment the watch rechecks eligibility and silently restores the single notification slot. A previously seen notification can reappear silently in this crash window. A change of account or access after a successful phone authorization takes effect on the next connected check.
+
+The native channel defaults to system-managed vibration with sound off. The user controls the channel, system quiet modes, notification permission and lock-screen display. The notification contains generic instructions and opens the watch app. A physical watch is needed to confirm tactile behavior.
+
+## Rollout and paired-device verification
+
+1. Apply the phone repository’s `supabase/migrations/202611180001_watch_announcement_cursor.sql` to the intended environment after event announcements and their existing RLS policies. Fresh installs can use the canonical schema. The SQL role fixture is `supabase/tests/watch_announcement_cursor.sql` and runs after `bootstrap.sql` and `schema.sql` in a disposable PostgreSQL database.
+2. Install both feature APKs on a paired Android phone and Wear OS watch with Google Play services. Debug builds share `com.example.unspokenqueues` and must use the same signing key. For a paired release, build the watch with `-PcompanionApplicationId=com.example.unspokenqueues` (or the actual installed phone ID) and use the same release signing certificate. The default release IDs still differ. Use separate device installs for the two APKs.
+3. Sign into the phone as a joined participant. Create an older host post from a second account, then enable alerts on the watch. Allow the baseline job to run. On a test watch, run `adb -s WATCH shell cmd jobscheduler run -f com.example.unspokenqueues 14820` to advance a check. The waiting message should change to the checking status without displaying an alert.
+4. Background both activities and publish one or more new posts as the host. Wait for the next scheduled run or force the same periodic job. Confirm one “Event update” notification with generic lock-screen copy. Dismiss it, run the job again, and confirm it stays dismissed. Watch instrumentation exercises actual notification posting and persisted scheduling with the class `com.unspokencues.wear.alerts.AnnouncementAlertsTest`.
+5. Repeat with a disconnected watch, a host posting to their own event, an outsider, a participant leaving before reconnecting, and a phone sign-out or account change before the next check. Reconnect and confirm only eligible new posts from the current session can produce a notification.
+6. Disable alerts, publish while disabled and re-enable. Confirm a fresh silent baseline. Repeat with notification permission denied and the channel blocked in watch settings. On physical hardware, verify the channel’s haptic control and Do Not Disturb behavior.
