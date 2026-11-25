@@ -59,6 +59,7 @@ import com.example.unspokenqueues.data.isPasswordRecoveryLink
 import com.example.unspokenqueues.data.isSignInLink
 import com.example.unspokenqueues.data.AvatarRepository
 import com.example.unspokenqueues.data.EventCoverRepository
+import com.example.unspokenqueues.data.chat.ChatRepository
 import com.example.unspokenqueues.data.EventRepository
 import com.example.unspokenqueues.data.PhoneCueSync
 import com.example.unspokenqueues.data.ProfileRepository
@@ -739,6 +740,7 @@ fun UnspokenCuesApp(
                             onBack = { openEvent = null },
                             profileVisibleForWaves = profile.isPublic && !profile.privateMode && profile.privacy.showStatus,
                             mainProfile = profile,
+                            chatAccess = remember(uid) { ChatRepository(context.applicationContext, uid) },
                         )
                     }
                 }

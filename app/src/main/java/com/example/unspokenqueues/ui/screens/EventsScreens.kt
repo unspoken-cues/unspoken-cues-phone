@@ -75,8 +75,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import coil3.compose.AsyncImage
 import com.example.unspokenqueues.R
+import com.example.unspokenqueues.data.chat.ChatAccess
+import com.example.unspokenqueues.model.effectiveEnd
 import com.example.unspokenqueues.data.EventCoverRepository
 import com.example.unspokenqueues.data.EventDraft
 import com.example.unspokenqueues.data.EventRepository
@@ -869,11 +874,12 @@ fun EventDetailScreen(
     reactionRepository: ReactionRepository = remember { ReactionRepository() },
     profileVisibleForWaves: Boolean = false,
     mainProfile: Profile? = null,
+    chatAccess: ChatAccess? = null,
 ) {
     key(event.id, userId) {
         EventDetailContent(
             repo, safety, userId, status, event, onEventChange, onRemoved, onBack,
-            announcementRepo, reactionRepository, profileVisibleForWaves, mainProfile,
+            announcementRepo, reactionRepository, profileVisibleForWaves, mainProfile, chatAccess,
         )
     }
 }
@@ -892,6 +898,7 @@ private fun EventDetailContent(
     reactionRepository: ReactionRepository,
     profileVisibleForWaves: Boolean,
     mainProfile: Profile?,
+    chatAccess: ChatAccess?,
 ) {
     val isHost = event.hostId == userId
     val zone = remember { ZoneId.systemDefault() }
@@ -1026,6 +1033,50 @@ private fun EventDetailContent(
         onRemoved()
     }
 
+    val endTime = event.effectiveEnd()
+    var chatTimeOpen by remember(event.active, endTime) {
+        mutableStateOf(event.active && (endTime == null || Instant.now().isBefore(endTime)))
+    }
+    LaunchedEffect(endTime, event.active) {
+        if (endTime != null && chatTimeOpen) {
+            kotlinx.coroutines.delay(java.time.Duration.between(Instant.now(), endTime).toMillis().coerceAtLeast(0) + 1)
+            chatTimeOpen = false
+        }
+    }
+    var showingChat by remember { mutableStateOf(false) }
+    var chatPeer by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val ownChatCue = eventProfile?.status ?: status
+    val chatAllowed = chatAccess != null && participant && chatTimeOpen && profileVisibleForWaves && eventProfileTried &&
+        (me?.cuedIn ?: isHost) && (ownChatCue == CueStatus.GREEN || ownChatCue == CueStatus.YELLOW)
+    var chatTargets by remember { mutableStateOf(emptySet<String>()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(chatAllowed, showingChat, reload, chatAccess, lifecycle) {
+        chatTargets = emptySet()
+        if (!chatAllowed) {
+            showingChat = false
+            chatPeer = null
+        }
+        if (chatAllowed && chatAccess != null && !showingChat) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                try {
+                    chatTargets = chatAccess.eligiblePeers(event.id)
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    chatTargets = emptySet()
+                }
+            }
+        }
+    }
+    if (showingChat && chatAllowed && chatAccess != null) {
+        EventChatScreen(event.id, event.name, chatAccess, onBack = {
+            showingChat = false
+            chatPeer = null
+            reload++
+        }, initialPeerId = chatPeer?.first, initialPeerName = chatPeer?.second)
+        return
+    }
+
     ScreenColumn {
         Box {
             EventCover(
@@ -1053,6 +1104,12 @@ private fun EventDetailContent(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Hosted by", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(event.hostName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (chatAllowed && event.hostId in chatTargets && attendees?.none { it.userId == event.hostId } == true) {
+                        TextButton({
+                            chatPeer = event.hostId to event.hostName
+                            showingChat = true
+                        }) { Text("Chat with host") }
+                    }
                 }
             }
             if (phase == EventPhase.LIVE) Chip("Happening now")
@@ -1142,6 +1199,13 @@ private fun EventDetailContent(
             }
         }
 
+        if (chatAllowed) {
+            OutlinedButton({
+                chatPeer = null
+                showingChat = true
+            }, Modifier.fillMaxWidth().height(52.dp)) { Text("Event inbox") }
+        }
+
         // The server applies the rule: the host sees everyone, others only green and yellow.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -1181,6 +1245,9 @@ private fun EventDetailContent(
                             // No actions on the viewer's own row.
                             onBlock = { blocking = person }.takeIf { person.userId != userId },
                             onReport = { reporting = person },
+                            onChat = if (chatAllowed && person.userId in chatTargets) {
+                                { chatPeer = person.userId to person.name; showingChat = true }
+                            } else null,
                         )
                     }
                 }
@@ -1349,7 +1416,7 @@ private fun EventProfileSection(profile: EventProfile?, tried: Boolean, mainName
 
 // [onBlock] is null for the viewer's own row, which then has no actions menu.
 @Composable
-private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() -> Unit)?, onReport: () -> Unit) {
+private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() -> Unit)?, onReport: () -> Unit, onChat: (() -> Unit)?) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1365,6 +1432,9 @@ private fun AttendeeRow(person: Attendee, actionsEnabled: Boolean, onBlock: (() 
             if (!person.cuedIn) {
                 Text("Cued out", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+        if (onChat != null) {
+            TextButton(onChat, enabled = actionsEnabled) { Text("Chat") }
         }
         if (onBlock != null) {
             Box {

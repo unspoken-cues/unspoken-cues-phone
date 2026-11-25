@@ -37,6 +37,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (providers.gradleProperty("chatLab").orNull == "true") applicationIdSuffix = ".chatlab"
+        }
         release {
             optimization {
                 enable = false
@@ -76,6 +79,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    implementation("com.google.crypto.tink:tink-android:1.24.0")
 
     // Supabase
     implementation(platform(libs.supabase.bom))

@@ -165,6 +165,7 @@ class EventsScreenTest {
         userId: String,
         event: Event = mixer,
         safety: SafetyRepository = SafetyRepository(),
+        chat: TestInbox? = null,
         waves: ReactionRepository = object : ReactionRepository() {
             override suspend fun state(eventId: String) = ReactionState(false, false, emptyList(), emptyList())
         },
@@ -178,6 +179,7 @@ class EventsScreenTest {
                         onRemoved = { clicks += "removed" },
                         onBack = { clicks += "back" },
                         profileVisibleForWaves = true,
+                        chatAccess = chat,
                         reactionRepository = waves,
                         announcementRepo = object : AnnouncementRepository() {
                             override suspend fun announcements(eventId: String): List<Announcement> = emptyList()
@@ -186,6 +188,17 @@ class EventsScreenTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun onlyServerApprovedDirectoryPeersOfferChat() {
+        val people = listOf(attendee("blair", "Blair", CueStatus.GREEN), attendee("private", "Swap friend", CueStatus.GREEN))
+        val repo = FakeEventRepository(listOf(mixer), people)
+        showDetail(repo, "host", chat = TestInbox())
+        compose.onNodeWithText("Event inbox").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Chat").performScrollTo().performClick()
+        compose.onNodeWithText("Request chat").assertIsDisplayed()
+        compose.onNodeWithText("Blair").assertIsDisplayed()
     }
 
     // ---------- My events ----------
