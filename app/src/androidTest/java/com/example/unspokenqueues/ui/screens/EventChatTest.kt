@@ -1,5 +1,6 @@
 package com.example.unspokenqueues.ui.screens
 
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsActions
@@ -101,7 +102,7 @@ class EventChatTest {
         ui.onNodeWithText("Send").performClick()
         ui.onNodeWithText("Couldn’t send.", substring = true).assertIsDisplayed()
         ui.onNodeWithText("Send").assertIsEnabled().performSemanticsAction(SemanticsActions.OnClick)
-        ui.waitUntil(5_000) { ui.onAllNodesWithText("You").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(5_000) { ui.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "From you")).fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithText("Meet by the stairs").assertIsDisplayed()
         assertEquals(2, access.attempts.size)
         assertEquals(1, access.attempts.toSet().size)
@@ -122,11 +123,26 @@ class EventChatTest {
         show(access, true)
         ui.onNodeWithText("Message").performTextInput("Found the table")
         ui.onNodeWithText("Send").assertIsEnabled().performSemanticsAction(SemanticsActions.OnClick)
-        ui.waitUntil(8_000) { ui.onAllNodesWithText("You").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(8_000) { ui.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "From you")).fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithText("Found the table").assertIsDisplayed()
         ui.onNodeWithText("Couldn’t send.", substring = true).assertDoesNotExist()
         ui.onNodeWithText("Send").assertIsNotEnabled()
         ui.runOnIdle { assertEquals(1, access.attempts.size) }
+    }
+
+    @Test fun incomingAndOutgoingBubblesIdentifyTheSpeakerAndUseOppositeSides() {
+        val access = TestInbox(pending.copy(state = "accepted")).apply {
+            history += ChatMessage("1", false, "Here by the door", "")
+            history += ChatMessage("2", true, "On my way", "")
+        }
+        show(access, true)
+        val incoming = ui.onNode(hasText("Here by the door") and
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "From Blair"))
+        val outgoing = ui.onNode(hasText("On my way") and
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "From you"))
+        incoming.assertIsDisplayed()
+        outgoing.assertIsDisplayed()
+        org.junit.Assert.assertTrue(incoming.getUnclippedBoundsInRoot().left < outgoing.getUnclippedBoundsInRoot().left)
     }
 
     @Test fun readsOlderMessagesOnDemandAndHidesUnverifiedText() {

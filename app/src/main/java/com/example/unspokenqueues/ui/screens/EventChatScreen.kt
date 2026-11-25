@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -253,7 +256,7 @@ private fun Conversation(
                 TextButton({ refresh++; onRefresh() }) { Text("Try again") }
             }
             MessageComposer(
-                messages, draft, busy, hasEarlier, loadEarlier,
+                messages, name, draft, busy, hasEarlier, loadEarlier,
                 onEarlier = { loadEarlier = true; refresh++ },
                 enabled = !historyError && messages != null && thread.peerKey != null,
                 onSend = { id, text, sent ->
@@ -319,6 +322,7 @@ private class MessageDraft {
 @Composable
 private fun MessageComposer(
     messages: List<ChatMessage>?,
+    peerName: String,
     draft: MessageDraft,
     busy: Boolean,
     hasEarlier: Boolean,
@@ -336,26 +340,13 @@ private fun MessageComposer(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             reverseLayout = true, state = list,
             contentPadding = PaddingValues(vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
+            verticalArrangement = Arrangement.Bottom,
         ) {
-            items(newestFirst, key = { it.id }) { line ->
-                Box(Modifier.fillMaxWidth(), contentAlignment = if (line.mine) Alignment.CenterEnd else Alignment.CenterStart) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (line.mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.widthIn(max = 320.dp),
-                    ) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                            Text(if (line.mine) "You" else "Received", style = MaterialTheme.typography.labelSmall)
-                            if (line.readable) {
-                                Text(line.text, style = MaterialTheme.typography.bodyLarge)
-                            } else {
-                                Text("Message could not be verified", style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                }
+            itemsIndexed(newestFirst, key = { _, message -> message.id }) { index, message ->
+                // Indices increase towards the top of this reverse-layout conversation.
+                val joinsAbove = newestFirst.getOrNull(index + 1)?.mine == message.mine
+                val joinsBelow = newestFirst.getOrNull(index - 1)?.mine == message.mine
+                MessageBubble(message, peerName, joinsAbove, joinsBelow)
             }
             if (hasEarlier) item(key = "older-page") {
                 TextButton(onEarlier, enabled = !loadingEarlier, modifier = Modifier.fillMaxWidth()) {
@@ -380,6 +371,39 @@ private fun MessageComposer(
                 },
                 enabled = !busy && enabled && draft.text.isNotBlank() && draftBytes <= 4096,
             ) { Text("Send") }
+        }
+    }
+}
+
+@Composable
+private fun MessageBubble(message: ChatMessage, peerName: String, joinsAbove: Boolean, joinsBelow: Boolean) {
+    val mine = message.mine
+    val outer = 20.dp
+    val top = if (joinsAbove) 6.dp else outer
+    val bottom = if (joinsBelow) 6.dp else outer
+    val shape = if (mine) RoundedCornerShape(outer, top, bottom, outer)
+                else RoundedCornerShape(top, outer, outer, bottom)
+    val colors = MaterialTheme.colorScheme
+    val alignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart
+    Box(
+        Modifier.fillMaxWidth().padding(top = if (joinsAbove) 3.dp else 10.dp),
+        contentAlignment = alignment,
+    ) {
+        Box(Modifier.fillMaxWidth(0.84f), contentAlignment = alignment) {
+            Surface(
+                modifier = Modifier.widthIn(max = 360.dp).semantics(mergeDescendants = true) {
+                    stateDescription = if (mine) "From you" else "From $peerName"
+                },
+                shape = shape,
+                color = if (mine) colors.primary else colors.outlineVariant,
+                contentColor = if (mine) colors.onPrimary else colors.onSurface,
+            ) {
+                Text(
+                    if (message.readable) message.text else "Message could not be verified",
+                    Modifier.padding(horizontal = 15.dp, vertical = 9.dp),
+                    style = if (message.readable) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
     }
 }
