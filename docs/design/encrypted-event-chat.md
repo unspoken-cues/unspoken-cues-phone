@@ -13,16 +13,16 @@ Two people at the same active event can open a one-to-one text conversation from
 
 ## Acceptance checklist
 
-- [ ] Eligible attendee can request, recipient alone can accept, either party can block, third parties and ineligible attendees have no access.
-- [ ] Concurrent or retried requests/sends produce one thread/message. Leave, event end, privacy and block changes are enforced on subsequent operations.
-- [ ] Both participants can open text. An unrelated key, altered payload or identity context fails to open it. First-seen peer keys are pinned. A changed peer identity cannot silently receive new text.
-- [ ] A unique test phrase is absent from the serialized relay payload and persisted server row. History survives phone app restart with the same identity.
-- [ ] On Android, request, accept, send, reconnect/reopen, read and block. Record time from sending to display under foreground refresh and target under ten seconds on the local emulator.
-- [ ] Build, unit tests, SQL policy tests and relevant Android tests pass. Review failures, fix and rerun the affected checks.
+- [x] Eligible attendee can request, recipient alone can accept, either party can block, third parties and ineligible attendees have no access.
+- [x] Concurrent or retried requests/sends produce one thread/message. Leave, event end, privacy and block changes are enforced on subsequent operations.
+- [x] Both participants can open text. An unrelated key, altered payload or identity context fails to open it. First-seen peer keys are pinned. A changed peer identity cannot silently receive new text.
+- [x] A unique test phrase is absent from the serialized relay payload and persisted server row. History survives phone app restart with the same identity.
+- [x] On Android, request, accept, send, reconnect/reopen, read and block. Record time from sending to display under foreground refresh and target under ten seconds on the local emulator.
+- [x] Build, unit tests, SQL policy tests and relevant Android tests pass. Review failures, fix and rerun the affected checks.
 
 ## Security and product limits
 
-One phone identity per account. Device loss needs explicit recovery before trusting a replacement key. The relay can see participants, events, timing and approximate size. Initial key verification uses an independent comparison between participants. The proposed static recipient-key encryption does not provide forward secrecy after private-key compromise. The initial release design includes no remote plaintext backup, push delivery, media or watch messaging. Production rollout requires a reviewed migration and independent review of device identity, protocol integration and recovery.
+One phone identity per account. Device loss needs explicit recovery before trusting a replacement key. The relay can see participants, events, timing and approximate size. Initial key verification uses an independent comparison between participants. Static recipient-key encryption does not provide forward secrecy after private-key compromise. The initial release design includes no remote plaintext backup, push delivery, media or watch messaging. Production rollout requires a reviewed migration and independent review of device identity, protocol integration and recovery.
 
 ## Device identity and transport
 
@@ -60,3 +60,28 @@ Run the complete Android suite and the live delivery benchmark with the installe
 ```
 
 Run the SQL checks against a disposable local database initialized with `supabase/tests/bootstrap.sql` followed by `supabase/schema.sql`. Apply the feature tests with `psql -X -v ON_ERROR_STOP=1`. The concurrency suite uses the PostgreSQL dblink extension and its own isolated test rows. For an existing project, the deployable incremental change is `supabase/migrations/202611250001_encrypted_event_chat.sql`.
+
+## Review record
+
+| Owner | Checks | Corrections verified during integration |
+| --- | --- | --- |
+| Relay | PostgreSQL 16 authorization tests, two-session concurrency tests, seven existing SQL regression suites | Bound every chat RPC to the expected signed-in account. Required the private event join code for first enrollment and made membership identifiers immutable. Reapplied the migration to the complete schema. |
+| Device encryption | Five Android crypto tests on the Pixel emulator | Exercised wrong recipients, tampered messages, metadata substitution, peer key changes, lost wrapping keys, account isolation and encrypted storage across identity reload. |
+| Android UI | Seven chat UI tests and a signed-in event-detail entry test | Fixed retries after a lost delivery receipt. A later authenticated history read can confirm delivery. Added bounded paging, a placeholder for an unreadable message and a check that revoked history clears during paging. |
+| Integration | Actual Android Keystore identities, PostgreSQL, PostgREST, release build and full Android test run | Checked the database independently of the UI. Fixed the emulator-only cleartext policy and made the existing package-name smoke test work with the isolated debug application ID. |
+
+
+## Verification on November 25, 2026
+
+The debug lab and unsigned release APKs built. The release manifest excluded the lab activity. All 169 JVM tests and all 150 Android instrumented tests passed in the final run on the Pixel 10a emulator. Android lint reported zero errors, 41 warnings and two hints. PostgreSQL 16 passed all nine SQL suites, including 61 explicit feature assertions and three overlapping transaction scenarios. The incremental migration reapplied successfully to a fresh canonical schema.
+
+| Pixel emulator delivery measurement | Final elapsed time | Acceptance target |
+| --- | ---: | ---: |
+| Send, retry the same ID, reopen as the recipient, and display the message | 230 ms | Under 10 seconds |
+| Send while the recipient is viewing the conversation and wait for foreground refresh | 3,100 ms | Under 10 seconds |
+
+These are local measurements using the actual relay, Keystore and Android UI. The benchmark checked that each retried ID had one server row and that the test text was absent from both the serialized envelope and its decoded fields. A separate database inspection confirmed six distinct benchmark message IDs in six encrypted rows across three runs.
+
+For the hands-on check, Alex requested chat in the Community Meetup, Blair accepted and sent “Meet by the blue doors” through the composer. After force-stopping and relaunching the app as Alex, the same message appeared in the conversation. The database contained one encrypted envelope for that conversation. The emulator was left on Alex’s reply screen, with the two local Docker services running.
+
+Production deployment, an independent cryptography review, replacement-device recovery and a two-physical-phone trial remain pending.
